@@ -32,15 +32,15 @@ end)
 
 -- ==================== UI COLOURS (DurianHub palette) ====================
 local COLORS = {
-    PrimaryGreen   = Color3.fromRGB(36, 72, 32),   -- #244820
-    SecondaryGreen = Color3.fromRGB(59, 107, 53),  -- #3B6B35
-    Gold           = Color3.fromRGB(224, 169, 56), -- #E0A938
-    LightGold      = Color3.fromRGB(245, 200, 105),-- #F5C869
-    Cream          = Color3.fromRGB(248, 246, 240),-- #F8F6F0
-    TextDark       = Color3.fromRGB(26, 33, 25),   -- #1A2119
-    TextMuted      = Color3.fromRGB(102, 112, 100),-- #667064
-    Border         = Color3.fromRGB(230, 224, 212),-- #E6E0D4
-    CardBg         = Color3.fromRGB(250, 248, 244),-- #FAF8F4
+    PrimaryGreen   = Color3.fromRGB(36, 72, 32),
+    SecondaryGreen = Color3.fromRGB(59, 107, 53),
+    Gold           = Color3.fromRGB(224, 169, 56),
+    LightGold      = Color3.fromRGB(245, 200, 105),
+    Cream          = Color3.fromRGB(248, 246, 240),
+    TextDark       = Color3.fromRGB(26, 33, 25),
+    TextMuted      = Color3.fromRGB(102, 112, 100),
+    Border         = Color3.fromRGB(230, 224, 212),
+    CardBg         = Color3.fromRGB(250, 248, 244),
     CardHover      = Color3.fromRGB(255, 255, 255),
     Shadow         = Color3.fromRGB(0, 0, 0),
 }
@@ -62,7 +62,6 @@ MainFrame.Size = UDim2.new(0, 820, 0, 580)
 MainFrame.Position = UDim2.new(0.5, -410, 0.5, -290)
 MainFrame.ClipsDescendants = false
 
--- Drop shadow (using UIStroke + gradient approximation)
 local MainCorner = Instance.new("UICorner")
 MainCorner.CornerRadius = UDim.new(0, 24)
 MainCorner.Parent = MainFrame
@@ -73,7 +72,6 @@ MainStroke.Thickness = 1
 MainStroke.Transparency = 0.7
 MainStroke.Parent = MainFrame
 
--- Inner shadow effect (simulated with a semi‑transparent overlay)
 local ShadowOverlay = Instance.new("Frame")
 ShadowOverlay.Parent = MainFrame
 ShadowOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
@@ -92,7 +90,6 @@ Header.BackgroundTransparency = 1
 Header.Size = UDim2.new(1, -32, 0, 64)
 Header.Position = UDim2.new(0, 16, 0, 16)
 
--- Durian icon (emoji fallback – we also could use an ImageLabel with a decal)
 local DurianIcon = Instance.new("TextLabel")
 DurianIcon.Parent = Header
 DurianIcon.BackgroundTransparency = 1
@@ -146,7 +143,6 @@ Subtext.TextColor3 = COLORS.TextMuted
 Subtext.TextSize = 12
 Subtext.TextXAlignment = Enum.TextXAlignment.Left
 
--- Close button (×)
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Name = "CloseBtn"
 CloseBtn.Parent = Header
@@ -168,7 +164,7 @@ CloseBtn.MouseButton1Click:Connect(function()
         BackgroundTransparency = 1,
         Size = UDim2.new(0, 0, 0, 0)
     }):Play()
-    task.wait(0.3)
+    wait(0.3)
     ScreenGui:Destroy()
 end)
 
@@ -180,7 +176,6 @@ Toolbar.BackgroundTransparency = 1
 Toolbar.Size = UDim2.new(1, -32, 0, 44)
 Toolbar.Position = UDim2.new(0, 16, 0, 88)
 
--- Search Box
 local SearchBox = Instance.new("TextBox")
 SearchBox.Parent = Toolbar
 SearchBox.BackgroundColor3 = COLORS.Cream
@@ -201,7 +196,6 @@ SearchStroke.Color = COLORS.Border
 SearchStroke.Thickness = 1
 SearchStroke.Parent = SearchBox
 
--- Region Filter
 local RegionFilter = Instance.new("TextBox")
 RegionFilter.Parent = Toolbar
 RegionFilter.BackgroundColor3 = COLORS.Cream
@@ -222,7 +216,6 @@ RegionStroke.Color = COLORS.Border
 RegionStroke.Thickness = 1
 RegionStroke.Parent = RegionFilter
 
--- We'll use a dropdown via a TextBox that cycles through regions (simple)
 local regions = {"All Regions", "Americas", "Europe", "Asia-Pacific"}
 local regionIndex = 1
 RegionFilter.FocusLost:Connect(function(enterPressed)
@@ -244,7 +237,6 @@ RegionFilter.MouseButton1Click:Connect(function()
     refreshServers()
 end)
 
--- Refresh Button
 local RefreshBtn = Instance.new("TextButton")
 RefreshBtn.Parent = Toolbar
 RefreshBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
@@ -263,7 +255,6 @@ RefStroke.Color = COLORS.Border
 RefStroke.Thickness = 1
 RefStroke.Parent = RefreshBtn
 
--- Auto-refresh Toggle
 local AutoBtn = Instance.new("TextButton")
 AutoBtn.Parent = Toolbar
 AutoBtn.BackgroundColor3 = COLORS.Gold
@@ -282,7 +273,6 @@ AutoStroke.Color = COLORS.Gold
 AutoStroke.Thickness = 1
 AutoStroke.Parent = AutoBtn
 
--- Status Badge
 local StatusBadge = Instance.new("Frame")
 StatusBadge.Parent = Toolbar
 StatusBadge.BackgroundColor3 = COLORS.Cream
@@ -329,7 +319,6 @@ local ListCorner = Instance.new("UICorner")
 ListCorner.CornerRadius = UDim.new(0, 16)
 ListCorner.Parent = ListContainer
 
--- ScrollingFrame for the server list
 local ServerScroll = Instance.new("ScrollingFrame")
 ServerScroll.Parent = ListContainer
 ServerScroll.BackgroundTransparency = 1
@@ -363,7 +352,6 @@ TplStroke.Color = COLORS.Border
 TplStroke.Thickness = 1
 TplStroke.Parent = Template
 
--- Info area
 local InfoArea = Instance.new("Frame")
 InfoArea.Parent = Template
 InfoArea.BackgroundTransparency = 1
@@ -439,7 +427,6 @@ local IDCorner = Instance.new("UICorner")
 IDCorner.CornerRadius = UDim.new(0, 4)
 IDCorner.Parent = ServerID
 
--- Join Button
 local JoinBtn = Instance.new("TextButton")
 JoinBtn.Name = "JoinBtn"
 JoinBtn.Parent = Template
@@ -471,18 +458,18 @@ Spinner.Image = "rbxassetid://5108447180"
 Spinner.ImageColor3 = COLORS.Gold
 Spinner.Visible = false
 
-task.spawn(function()
+spawn(function()
     while true do
         if Spinner.Visible then
             Spinner.Rotation = (Spinner.Rotation + 5) % 360
         end
-        task.wait()
+        wait()
     end
 end)
 
 -- ==================== CORE FUNCTIONS ====================
-local allServers = {} -- cache
-local refreshCooldown = false  -- ✅ declared early
+local allServers = {}
+local refreshCooldown = false
 
 local function fetchServers(cursor)
     local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100", game.PlaceId)
@@ -510,7 +497,6 @@ local function applyFilters()
     elseif regionFilter:find("asia") then selectedRegion = "Asia"
     else selectedRegion = "all" end
 
-    -- Clear all except template
     for _, child in ipairs(ServerScroll:GetChildren()) do
         if child ~= Template then
             child:Destroy()
@@ -518,32 +504,25 @@ local function applyFilters()
     end
 
     local count = 0
-    -- Sort by player count (lowest first)
     table.sort(allServers, function(a, b)
         return (a.playing or 0) < (b.playing or 0)
     end)
 
     for _, server in ipairs(allServers) do
-        -- Only show joinable (playing < maxPlayers)
         if server.playing < server.maxPlayers then
-            -- Filter by region
             local region = server.region or ""
             local regionMatch = (selectedRegion == "all") or (region:find(selectedRegion) ~= nil)
             if regionMatch then
-                -- Filter by search query (name or ID)
                 local idStr = tostring(server.id):lower()
                 local nameMatch = (gameName:lower():find(query) or idStr:find(query))
                 if nameMatch then
-                    -- Create entry
                     local entry = Template:Clone()
                     entry.Visible = true
                     entry.Name = "ServerEntry_" .. server.id
 
-                    -- Set info
                     local nameLabel = entry:FindFirstChild("InfoArea"):FindFirstChild("TitleRow"):FindFirstChild("ServerName")
                     nameLabel.Text = gameName
 
-                    -- Ping tag (we don't have ping, so we show "Low" or "High" based on players)
                     local pingTag = entry:FindFirstChild("InfoArea"):FindFirstChild("TitleRow"):FindFirstChild("PingTag")
                     local playerCount = server.playing or 0
                     local max = server.maxPlayers or 32
@@ -580,10 +559,9 @@ end
 local function refreshServers()
     if refreshCooldown then return end
     refreshCooldown = true
-    task.wait(0.5)
+    wait(0.5)
     refreshCooldown = false
 
-    -- Clear existing entries (except template)
     for _, child in ipairs(ServerScroll:GetChildren()) do
         if child ~= Template then
             child:Destroy()
@@ -624,25 +602,20 @@ SearchBox:GetPropertyChangedSignal("Text"):Connect(applyFilters)
 RefreshBtn.MouseButton1Click:Connect(refreshServers)
 
 local autoRefreshEnabled = true
-local autoRefreshTask = nil
+local autoRefreshRunning = false
 
 function startAutoRefresh()
-    if autoRefreshTask then return end
-    autoRefreshTask = task.spawn(function()
+    if autoRefreshRunning then return end
+    autoRefreshRunning = true
+    spawn(function()
         while autoRefreshEnabled do
-            task.wait(15)
+            wait(15)
             if autoRefreshEnabled then
                 refreshServers()
             end
         end
+        autoRefreshRunning = false
     end)
-end
-
-function stopAutoRefresh()
-    if autoRefreshTask then
-        task.cancel(autoRefreshTask)
-        autoRefreshTask = nil
-    end
 end
 
 AutoBtn.MouseButton1Click:Connect(function()
@@ -658,7 +631,7 @@ AutoBtn.MouseButton1Click:Connect(function()
         AutoBtn.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
         AutoBtn.BackgroundTransparency = 0.2
         AutoBtn.TextColor3 = Color3.fromRGB(200, 70, 70)
-        stopAutoRefresh()
+        -- The loop will stop because autoRefreshEnabled is false
     end
 end)
 
