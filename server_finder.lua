@@ -1,16 +1,22 @@
 --═══════════════════════════════════════════════════════════
 --  🍈 DurianHub — Community Server Finder
---  PC + Android • Fixed invisible-GUI bug • No placeholders
+--  PC + Android • Fixes #1,3,4,5,6,7,8,9,10,11,12
+--  [#2 intentionally unchanged: executor-only by design]
 --═══════════════════════════════════════════════════════════
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
---// CONFIG
-local MAX_PAGES             = 3
+--═══════════════ CONFIG ═══════════════
+local MAX_PAGES             = 10     -- [#4] was 3 (~300 servers); now ~1000
+local PAGE_DELAY            = 0.15   -- pause between API pages (rate-limit safety)
 local AUTO_REFRESH_INTERVAL = 30
 local LOGO_REPO = "https://raw.githubusercontent.com/iccyzsn/SAG---Server-Finder-DurianHub/main/img/"
 
---// SERVICES
+-- [#5] NOTE: the API's sortOrder is NOT a guarantee of lowest-population
+-- ordering. We sort locally on every render; MAX_PAGES controls coverage.
+-- Raise MAX_PAGES for deeper scans (each page = 100 servers).
+
+--═══════════════ SERVICES ═══════════════
 local HttpService        = game:GetService("HttpService")
 local TweenService       = game:GetService("TweenService")
 local TeleportService    = game:GetService("TeleportService")
@@ -26,45 +32,98 @@ pcall(function()
     GameName = MarketplaceService:GetProductInfo(PlaceId).Name or GameName
 end)
 
---═══════════════ DEVICE DETECTION ═══════════════
+--═══════════════ CLEANUP REGISTRY [#8, #9] ═══════════════
+-- Service-level connections (UserInputService, workspace) survive
+-- ScreenGui:Destroy(). Every run registers a cleanup fn; the next run
+-- (or Destroying) disconnects everything from the previous run.
+local ENV = (type(getgenv) == "function" and getgenv()) or _G
+if ENV.DURIANHUB_CLEANUP then
+    pcall(ENV.DURIANHUB_CLEANUP)
+end
+
+local guiAlive = true
+local tracked  = {}
+
+local function track(conn)
+    if conn then table.insert(tracked, conn) end
+    return conn
+end
+
+local function cleanup()
+    if not guiAlive then return end
+    guiAlive = false
+    for _, c in ipairs(tracked) do
+        pcall(function() c:Disconnect() end)
+    end
+    table.clear(tracked)
+    if ENV.DURIANHUB_CLEANUP == cleanup then
+        ENV.DURIANHUB_CLEANUP = nil
+    end
+end
+ENV.DURIANHUB_CLEANUP = cleanup
+
+--═══════════════ GUI PARENT (mobile-safe) ═══════════════
+local function getGuiParent()
+    if type(gethui) == "function" then
+        local ok, ui = pcall(gethui)
+        if ok and ui then return ui end
+    end
+    local probe = Instance.new("Folder")
+    local canCore = pcall(function()
+        probe.Name = "__DH_Probe"
+        probe.Parent = game:GetService("CoreGui")
+    end)
+    if canCore then
+        probe:Destroy()
+        return game:GetService("CoreGui")
+    end
+    return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local GUI_PARENT = getGuiParent()
+
+local oldGui = GUI_PARENT:FindFirstChild("DurianHub_ServerFinder")
+if oldGui then oldGui:Destroy() end -- fires old run's Destroying → old cleanup
+
+--═══════════════ DEVICE / LAYOUT [#10, #11] ═══════════════
 local Viewport = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize)
     or Vector2.new(1280, 720)
 
-local IsMobile = (UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
-    or Viewport.X < 600
-
---// Responsive layout
-local L
-if IsMobile then
-    L = {
-        pad = 12, headerH = 44, logoSize = 40,
-        searchY = 70,  searchH = 36,
-        toolY   = 112, toolH   = 32,
-        statusY = 150, statusH = 26, statusText = 11,
-        listY   = 182,
-        width   = math.clamp(Viewport.X - 20, 300, 400),
-        height  = math.clamp(Viewport.Y - 30, 380, 520),
-        entryH  = 62, joinW = 88, joinH = 38,
-        btnText = 12, metaText = 11, titleText = 13,
-        rowH    = 34,
-    }
-else
-    L = {
-        pad = 16, headerH = 48, logoSize = 44,
-        searchY = 80,  searchH = 36,
-        toolY   = 80,  toolH   = 36,
-        statusY = 122, statusH = 28, statusText = 12,
-        listY   = 158,
-        width   = 560, height = 480,
-        entryH  = 56, joinW = 92, joinH = 34,
-        btnText = 13, metaText = 12, titleText = 13,
-        rowH    = 30,
-    }
+local function computeLayout(vp)
+    local mobile = (UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
+        or vp.X < 600
+    if mobile then
+        return {
+            mobile = true,
+            pad = 12, headerH = 44, logoSize = 40,
+            divY = 62,
+            searchY = 68,  searchH = 36,
+            toolY   = 110, toolH = 34,
+            statusY = 150, statusH = 24, statusText = 11,
+            listY   = 180,
+            width   = math.clamp(vp.X - 20, 300, 400),
+            height  = math.clamp(vp.Y - 40, 360, 540),
+            entryH  = 62, joinW = 84, joinH = 38,
+            btnText = 12, metaText = 11, titleText = 13, rowH = 34,
+        }
+    else
+        return {
+            mobile = false,
+            pad = 16, headerH = 48, logoSize = 44,
+            divY = 70,
+            searchY = 78,  searchH = 36,
+            toolY   = 78,  toolH = 36,
+            statusY = 122, statusH = 28, statusText = 12,
+            listY   = 158,
+            width   = 560, height = 480,
+            entryH  = 56, joinW = 92, joinH = 34,
+            btnText = 13, metaText = 12, titleText = 13, rowH = 30,
+        }
+    end
 end
 
-local NORMAL_SIZE = UDim2.new(0, L.width, 0, L.height)
-local MAX_SIZE    = UDim2.new(1, IsMobile and -16 or -40, 1, IsMobile and -30 or -80)
-local CENTER      = UDim2.new(0.5, 0, 0.5, 0)
+local L        = computeLayout(Viewport)
+local IsMobile = L.mobile
 
 --═══════════════ PALETTE ═══════════════
 local C = {
@@ -88,24 +147,21 @@ local C = {
 }
 
 --═══════════════ STATE ═══════════════
-local allServers  = {}
-local currentSort = "All Servers"
-local autoOn      = true
-local scanning    = false
-local searchText  = ""
+local allServers = {}
+local currentSort = "Low → High"   -- [#3] was "All Servers" — purpose is least players
+local autoOn     = true
+local scanning   = false
+local searchText = ""
+
+local sortOptions = { "Low → High", "All Servers", "High → Low", "Not Full Only" }
 
 --═══════════════ HELPERS ═══════════════
--- ✅ FIXED: never lets a "Parent" prop get overwritten with nil afterward
 local function new(class, props, parent)
     local inst = Instance.new(class)
     for k, v in pairs(props) do
-        if k ~= "Parent" then
-            inst[k] = v
-        end
+        if k ~= "Parent" then inst[k] = v end
     end
-    if parent then
-        inst.Parent = parent
-    end
+    if parent then inst.Parent = parent end
     return inst
 end
 
@@ -123,7 +179,7 @@ end
 local function httpGet(url)
     local ok, res = pcall(function() return game:HttpGet(url) end)
     if ok and res and #res > 0 then return res end
-    if request then
+    if type(request) == "function" then
         local ok2, res2 = pcall(function()
             return request({ Url = url, Method = "GET" }).Body
         end)
@@ -132,26 +188,6 @@ local function httpGet(url)
     return nil
 end
 
---═══════════════ GUI PARENT (mobile-safe chain) ═══════════════
-local function getGuiParent()
-    if gethui then
-        local ok, ui = pcall(gethui)
-        if ok and ui then return ui end
-    end
-    local probe = Instance.new("Folder")
-    local canCore = pcall(function()
-        probe.Name = "__DH_Probe"
-        probe.Parent = game:GetService("CoreGui")
-    end)
-    if canCore then
-        probe:Destroy()
-        return game:GetService("CoreGui")
-    end
-    return LocalPlayer:WaitForChild("PlayerGui")
-end
-
-local GUI_PARENT = getGuiParent()
-
 --═══════════════ LOGO ═══════════════
 local LOGO_ASSET = nil
 if writefile and isfile and getcustomasset then
@@ -159,9 +195,7 @@ if writefile and isfile and getcustomasset then
         local localName = "DurianHub_" .. fileName
         if not isfile(localName) then
             local body = httpGet(LOGO_REPO .. fileName)
-            if body then
-                pcall(function() writefile(localName, body) end)
-            end
+            if body then pcall(function() writefile(localName, body) end) end
         end
         if isfile(localName) then
             local ok, asset = pcall(getcustomasset, localName)
@@ -174,26 +208,22 @@ if writefile and isfile and getcustomasset then
 end
 
 --═══════════════ ROOT ═══════════════
-local old = GUI_PARENT:FindFirstChild("DurianHub_ServerFinder")
-if old then old:Destroy() end
-
--- ✅ FIXED: parent passed as 3rd arg, not inside props
 local ScreenGui = new("ScreenGui", {
     Name           = "DurianHub_ServerFinder",
     ResetOnSpawn   = false,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     DisplayOrder   = 999,
-    IgnoreGuiInset = false,
 }, GUI_PARENT)
+ScreenGui.Destroying:Connect(cleanup) -- [#8] cleanup on any destroy path
 
-if protectgui then pcall(protectgui, ScreenGui) end
+if type(protectgui) == "function" then pcall(protectgui, ScreenGui) end
 
---═══════════════ MINIMIZED LOGO BUTTON ═══════════════
-local LOGO_FLOAT_SIZE = IsMobile and 58 or 52
+--═══════════════ FLOATING LOGO (minimized state) ═══════════════
+local LOGO_FLOAT_SIZE = 56
 
 local LogoFloat = new("TextButton", {
     AnchorPoint      = Vector2.new(0.5, 0.5),
-    Position         = CENTER,
+    Position         = UDim2.new(0.5, 0, 0.5, 0),
     Size             = UDim2.new(0, LOGO_FLOAT_SIZE, 0, LOGO_FLOAT_SIZE),
     BackgroundColor3 = C.Cream,
     BorderSizePixel  = 0,
@@ -217,6 +247,10 @@ if LOGO_ASSET then
 end
 
 --═══════════════ MAIN FRAME ═══════════════
+local NORMAL_SIZE = UDim2.new(0, L.width, 0, L.height)
+local MAX_SIZE    = UDim2.new(1, IsMobile and -16 or -40, 1, IsMobile and -30 or -80)
+local CENTER      = UDim2.new(0.5, 0, 0.5, 0)
+
 local MainFrame = new("Frame", {
     AnchorPoint      = Vector2.new(0.5, 0.5),
     Position         = CENTER,
@@ -236,7 +270,6 @@ local Header = new("Frame", {
     Active                 = true,
 }, MainFrame)
 
--- Logo icon box in header
 local IconBox = new("Frame", {
     Size             = UDim2.new(0, L.logoSize, 0, L.logoSize),
     Position         = UDim2.new(0, 0, 0.5, -L.logoSize / 2),
@@ -255,10 +288,9 @@ if LOGO_ASSET then
     }, IconBox)
 end
 
-local textX = L.logoSize + 12
-
-new("TextLabel", {
-    Size = UDim2.new(0, 66, 0, 22), Position = UDim2.new(0, textX, 0, 5),
+local DurianLabel = new("TextLabel", {
+    Size = UDim2.new(0, 66, 0, 22),
+    Position = UDim2.new(0, L.logoSize + 12, 0, 5),
     BackgroundTransparency = 1,
     Text = "Durian", TextColor3 = C.Forest, TextSize = 19,
     Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left,
@@ -267,7 +299,7 @@ new("TextLabel", {
 local HubTag = new("Frame", {
     AutomaticSize    = Enum.AutomaticSize.X,
     Size             = UDim2.new(0, 0, 0, 18),
-    Position         = UDim2.new(0, textX + 66, 0, 7),
+    Position         = UDim2.new(0, L.logoSize + 78, 0, 7),
     BackgroundColor3 = C.GoldBG,
     BorderSizePixel  = 0,
 }, Header)
@@ -282,15 +314,15 @@ new("TextLabel", {
     Font = Enum.Font.GothamBold,
 }, HubTag)
 
-new("TextLabel", {
-    Size = UDim2.new(0, 220, 0, 14), Position = UDim2.new(0, textX, 0, 27),
+local Subtitle = new("TextLabel", {
+    Size = UDim2.new(0, 220, 0, 14),
+    Position = UDim2.new(0, L.logoSize + 12, 0, 27),
     BackgroundTransparency = 1,
     Text = "Community Server Finder", TextColor3 = C.SubText,
     TextSize = 11, Font = Enum.Font.GothamMedium,
     TextXAlignment = Enum.TextXAlignment.Left,
 }, Header)
 
--- Window buttons
 local function windowButton(text, xOffset, isClose)
     local btn = new("TextButton", {
         AnchorPoint      = Vector2.new(1, 0.5),
@@ -319,19 +351,17 @@ local MinBtn   = windowButton("—", 0, false)
 local MaxBtn   = windowButton("▢", IsMobile and -42 or -38, false)
 local CloseBtn = windowButton("✕", IsMobile and -84 or -76, true)
 
-new("Frame", { -- header divider
+local Divider = new("Frame", {
     Size             = UDim2.new(1, -2 * L.pad, 0, 1),
-    Position         = UDim2.new(0, L.pad, 0, L.headerH + 22),
+    Position         = UDim2.new(0, L.pad, 0, L.divY),
     BackgroundColor3 = C.Divider,
     BorderSizePixel  = 0,
 }, MainFrame)
 
---═══════════════ TOOLBAR ═══════════════
+--═══════════════ TOOLBAR ELEMENTS ═══════════════
 local SearchBox = new("TextBox", {
     Position         = UDim2.new(0, L.pad, 0, L.searchY),
-    Size             = IsMobile
-        and UDim2.new(1, -2 * L.pad, 0, L.searchH)
-        or UDim2.new(1, -(2 * L.pad) - 180, 0, L.searchH),
+    Size             = UDim2.new(1, -2 * L.pad, 0, L.searchH),
     BackgroundColor3 = C.InputBG,
     Text             = "",
     PlaceholderText  = "🔍  Filter by server or ID...",
@@ -352,13 +382,16 @@ SearchBox.FocusLost:Connect(function()
     SearchStroke.Color = C.Border
 end)
 
-local function toolButton(pos, size, text)
+local function toolButton(text)
     local btn = new("TextButton", {
-        Position = pos, Size = size,
+        Position         = UDim2.new(0, 0, 0, 0),
+        Size             = UDim2.new(0, 80, 0, L.toolH),
         BackgroundColor3 = C.White,
-        Text = text, TextColor3 = Color3.fromRGB(56, 66, 54),
-        TextSize = L.btnText, Font = Enum.Font.GothamBold,
-        AutoButtonColor = false,
+        Text             = text,
+        TextColor3       = Color3.fromRGB(56, 66, 54),
+        TextSize         = L.btnText,
+        Font             = Enum.Font.GothamBold,
+        AutoButtonColor  = false,
     }, MainFrame)
     corner(9, btn)
     local st = stroke(C.Border, 1, btn)
@@ -367,52 +400,19 @@ local function toolButton(pos, size, text)
     return btn, st
 end
 
-local RefreshBtn, RefreshStroke
-local AutoBtn, AutoStroke
-local SortBtn
+local SortBtn    = toolButton(currentSort .. "  ▾")
+local RefreshBtn, RefreshStroke = toolButton("↻  Refresh")
+local AutoBtn, AutoStroke       = toolButton("⏱  Auto: ON")
 
-if IsMobile then
-    local third = (L.width - 2 * L.pad - 16) / 3
-    SortBtn = toolButton(
-        UDim2.new(0, L.pad, 0, L.toolY), UDim2.new(0, third + 16, 0, L.toolH),
-        "All Servers ▾"
-    )
-    RefreshBtn, RefreshStroke = toolButton(
-        UDim2.new(0, L.pad + third + 26, 0, L.toolY), UDim2.new(0, third - 5, 0, L.toolH),
-        "↻ Refresh"
-    )
-    AutoBtn, AutoStroke = toolButton(
-        UDim2.new(0, L.pad + third * 2 + 21, 0, L.toolY), UDim2.new(0, third - 5, 0, L.toolH),
-        "⏱ Auto ON"
-    )
-else
-    RefreshBtn, RefreshStroke = toolButton(
-        UDim2.new(1, -L.pad - 160, 0, L.toolY), UDim2.new(0, 76, 0, L.toolH),
-        "↻  Refresh"
-    )
-    AutoBtn, AutoStroke = toolButton(
-        UDim2.new(1, -L.pad - 80, 0, L.toolY), UDim2.new(0, 76, 0, L.toolH),
-        "⏱  Auto: ON"
-    )
-    SortBtn = toolButton(
-        UDim2.new(0, L.pad, 0, L.statusY), UDim2.new(0, 110, 0, L.statusH),
-        "All Servers  ▾"
-    )
-end
-
--- Gold "ON" state for Auto
 AutoBtn.BackgroundColor3 = C.GoldBG
-AutoBtn.TextColor3 = C.GoldText
-AutoStroke.Color = C.GoldBorder
+AutoBtn.TextColor3       = C.GoldText
+AutoStroke.Color         = C.GoldBorder
 
--- Status badge
 local StatusBadge = new("Frame", {
-    AnchorPoint   = Vector2.new(IsMobile and 0 or 1, 0),
-    Position      = IsMobile
-        and UDim2.new(0, L.pad, 0, L.statusY)
-        or UDim2.new(1, -L.pad, 0, L.statusY),
-    AutomaticSize = Enum.AutomaticSize.X,
-    Size          = UDim2.new(0, 0, 0, L.statusH),
+    AnchorPoint      = Vector2.new(1, 0),
+    Position         = UDim2.new(1, -L.pad, 0, L.statusY),
+    AutomaticSize    = Enum.AutomaticSize.X,
+    Size             = UDim2.new(0, 0, 0, L.statusH),
     BackgroundColor3 = C.StatusBG,
     BorderSizePixel  = 0,
 }, MainFrame)
@@ -441,6 +441,18 @@ local StatusLabel = new("TextLabel", {
     Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left,
 }, StatusBadge)
 
+--═══════════════ SORT DROPDOWN SHELL ═══════════════
+local SortList = new("Frame", {
+    Size             = UDim2.new(0, 140, 0, #sortOptions * L.rowH + 8),
+    Position         = UDim2.new(0, L.pad, 0, L.statusY + L.statusH + 4),
+    BackgroundColor3 = C.White,
+    BorderSizePixel  = 0,
+    Visible          = false,
+    ZIndex           = 40,
+}, MainFrame)
+corner(10, SortList)
+stroke(C.Border, 1, SortList)
+
 --═══════════════ SERVER LIST ═══════════════
 local ListFrame = new("ScrollingFrame", {
     Position             = UDim2.new(0, L.pad, 0, L.listY),
@@ -456,8 +468,75 @@ new("UIListLayout", {
     Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder,
 }, ListFrame)
 
---═══════════════ FETCH ═══════════════
-local function fetchServers()
+--═══════════════ LAYOUT FUNCTIONS [#10, #11] ═══════════════
+local function layoutHeader()
+    Header.Size  = UDim2.new(1, -2 * L.pad, 0, L.headerH)
+    IconBox.Size = UDim2.new(0, L.logoSize, 0, L.logoSize)
+    IconBox.Position = UDim2.new(0, 0, 0.5, -L.logoSize / 2)
+    local textX = L.logoSize + 12
+    DurianLabel.Position = UDim2.new(0, textX, 0, 5)
+    HubTag.Position      = UDim2.new(0, textX + 66, 0, 7)
+    Subtitle.Position    = UDim2.new(0, textX, 0, 27)
+    local wbSize = IsMobile and 34 or 30
+    MinBtn.Size   = UDim2.new(0, wbSize, 0, wbSize)
+    MaxBtn.Size   = UDim2.new(0, wbSize, 0, wbSize)
+    CloseBtn.Size = UDim2.new(0, wbSize, 0, wbSize)
+    Divider.Position = UDim2.new(0, L.pad, 0, L.divY)
+end
+
+local function layoutToolbar()
+    SearchBox.Position = UDim2.new(0, L.pad, 0, L.searchY)
+    SearchBox.Size = L.mobile
+        and UDim2.new(1, -2 * L.pad, 0, L.searchH)
+        or  UDim2.new(1, -(2 * L.pad) - 180, 0, L.searchH)
+
+    if L.mobile then
+        local w3   = L.width - 2 * L.pad - 16
+        local sortW = math.floor(w3 * 0.40)
+        local btnW  = math.floor((w3 - sortW - 16) / 2)
+        SortBtn.Position = UDim2.new(0, L.pad, 0, L.toolY)
+        SortBtn.Size     = UDim2.new(0, sortW, 0, L.toolH)
+        RefreshBtn.Position = UDim2.new(0, L.pad + sortW + 8, 0, L.toolY)
+        RefreshBtn.Size     = UDim2.new(0, btnW, 0, L.toolH)
+        AutoBtn.Position    = UDim2.new(0, L.pad + sortW + btnW + 16, 0, L.toolY)
+        AutoBtn.Size        = UDim2.new(0, btnW, 0, L.toolH)
+        StatusBadge.AnchorPoint = Vector2.new(0, 0)
+        StatusBadge.Position    = UDim2.new(0, L.pad, 0, L.statusY)
+    else
+        RefreshBtn.Position = UDim2.new(1, -L.pad - 164, 0, L.toolY)
+        RefreshBtn.Size     = UDim2.new(0, 78, 0, L.toolH)
+        AutoBtn.Position    = UDim2.new(1, -L.pad - 82, 0, L.toolY)
+        AutoBtn.Size        = UDim2.new(0, 78, 0, L.toolH)
+        SortBtn.Position    = UDim2.new(0, L.pad, 0, L.statusY)
+        SortBtn.Size        = UDim2.new(0, 120, 0, L.statusH)
+        StatusBadge.AnchorPoint = Vector2.new(1, 0)
+        StatusBadge.Position    = UDim2.new(1, -L.pad, 0, L.statusY)
+    end
+    StatusBadge.Size = UDim2.new(0, 0, 0, L.statusH)
+
+    SortList.Size = UDim2.new(0, L.mobile and 160 or 140, 0, #sortOptions * L.rowH + 8)
+    SortList.Position = UDim2.new(0, L.pad, 0,
+        (L.mobile and L.toolY or L.statusY) + (L.mobile and L.toolH or L.statusH) + 4)
+
+    ListFrame.Position = UDim2.new(0, L.pad, 0, L.listY)
+    ListFrame.Size     = UDim2.new(1, -2 * L.pad, 1, -(L.listY + 12))
+    ListFrame.ScrollBarThickness = L.mobile and 8 or 5
+end
+
+local function syncToolTexts()
+    RefreshBtn.Text = scanning and "⏳"
+        or (L.mobile and "↻ Refresh" or "↻  Refresh")
+    AutoBtn.Text = autoOn
+        and (L.mobile and "⏱ Auto ON" or "⏱  Auto: ON")
+        or  (L.mobile and "⏱ Auto OFF" or "⏱  Auto: OFF")
+end
+
+layoutHeader()
+layoutToolbar()
+syncToolTexts()
+
+--═══════════════ FETCH [#4, #5] ═══════════════
+local function fetchServers(onProgress)
     local servers, cursor, pages = {}, nil, 0
     repeat
         local url = "https://games.roblox.com/v1/games/" .. PlaceId
@@ -471,9 +550,13 @@ local function fetchServers()
         if not ok or not data then break end
 
         for _, s in ipairs(data.data or {}) do table.insert(servers, s) end
-        cursor = data.nextPageCursor
         pages += 1
-        task.wait(0.1)
+        if onProgress then onProgress(#servers, pages) end
+
+        cursor = data.nextPageCursor
+        if cursor and pages < MAX_PAGES then
+            task.wait(PAGE_DELAY)
+        end
     until not cursor or pages >= MAX_PAGES
     return servers
 end
@@ -508,6 +591,7 @@ local function renderList()
         end
     end
 
+    -- [#5] local sort is the source of truth, not the API's ordering
     if currentSort == "Low → High" or currentSort == "Not Full Only" then
         if currentSort == "Not Full Only" then
             local kept = {}
@@ -521,15 +605,16 @@ local function renderList()
         table.sort(filtered, function(a, b) return a.playing > b.playing end)
     end
 
-    local nameWidth = -(L.joinW + 100)
+    -- [#12] per-mode width budget so title/tag/meta never fight the Join btn
+    local titleOffset = -(L.joinW + 64)
 
     for i, server in ipairs(filtered) do
         local isTop = (currentSort ~= "High → Low") and i <= 3
         local entry = new("Frame", {
-            Size = UDim2.new(1, -8, 0, L.entryH),
+            Size             = UDim2.new(1, -8, 0, L.entryH),
             BackgroundColor3 = C.CardBG,
-            BorderSizePixel = 0,
-            LayoutOrder = i,
+            BorderSizePixel  = 0,
+            LayoutOrder      = i,
         }, ListFrame)
         corner(12, entry)
         local entryStroke = stroke(C.BorderSoft, 1, entry)
@@ -547,12 +632,12 @@ local function renderList()
             entryStroke.Color = isTop and C.Gold or C.BorderSoft
         end)
 
-        -- Title
-        local tagName, tagBG, tagBorder, tagText = loadTagFor(server.playing, server.maxPlayers)
-        local nameY = IsMobile and 10 or 9
+        local tagName, tagBG, tagBorder, tagText =
+            loadTagFor(server.playing, server.maxPlayers)
+        local nameY = L.mobile and 10 or 9
 
         new("TextLabel", {
-            Size = UDim2.new(1, nameWidth, 0, 18),
+            Size = UDim2.new(1, titleOffset, 0, 18),
             Position = UDim2.new(0, 14, 0, nameY),
             BackgroundTransparency = 1,
             Text = (isTop and ("#" .. i .. "  ") or "") .. GameName,
@@ -564,7 +649,7 @@ local function renderList()
 
         local Tag = new("Frame", {
             AnchorPoint      = Vector2.new(1, 0),
-            Position         = UDim2.new(1, -(L.joinW + 34), 0, nameY + 2),
+            Position         = UDim2.new(1, -(L.joinW + 28), 0, nameY + 1),
             AutomaticSize    = Enum.AutomaticSize.X,
             Size             = UDim2.new(0, 0, 0, 15),
             BackgroundColor3 = tagBG,
@@ -581,23 +666,25 @@ local function renderList()
             Font = Enum.Font.GothamBold,
         }, Tag)
 
-        -- Meta
+        -- [#12] compact meta on mobile
+        local metaText = L.mobile
+            and ("👥 %d/%d  ·  #%s"):format(server.playing, server.maxPlayers, string.sub(server.id, 1, 8))
+            or  ("👥  %d / %d      🆔  #%s"):format(server.playing, server.maxPlayers, string.sub(server.id, 1, 8))
+
         new("TextLabel", {
-            Size = UDim2.new(1, nameWidth, 0, 14),
+            Size = UDim2.new(1, titleOffset, 0, 14),
             Position = UDim2.new(0, 14, 0, nameY + 22),
             BackgroundTransparency = 1,
-            Text = "👥  " .. server.playing .. " / " .. server.maxPlayers
-                .. "      🆔  #" .. string.sub(server.id, 1, 8),
+            Text = metaText,
             TextColor3 = C.Muted, TextSize = L.metaText,
             Font = Enum.Font.GothamMedium,
             TextXAlignment = Enum.TextXAlignment.Left,
         }, entry)
 
-        -- Join
         local JoinBtn = new("TextButton", {
             AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, -12, 0.5, 0),
-            Size = UDim2.new(0, L.joinW, 0, L.joinH),
+            Position    = UDim2.new(1, -12, 0.5, 0),
+            Size        = UDim2.new(0, L.joinW, 0, L.joinH),
             BackgroundColor3 = C.Forest,
             Text = "Join", TextColor3 = C.White,
             TextSize = L.btnText, Font = Enum.Font.GothamBold,
@@ -609,7 +696,7 @@ local function renderList()
         JoinBtn.MouseButton1Click:Connect(function()
             JoinBtn.Text = "..."
             task.wait(0.2)
-            local ok, err = pcall(function()
+            local ok = pcall(function()
                 TeleportService:TeleportToPlaceInstance(PlaceId, server.id, LocalPlayer)
             end)
             if not ok then
@@ -619,21 +706,39 @@ local function renderList()
         end)
     end
 
-    setStatus((#filtered) .. (IsMobile and " online" or " Servers Online"), C.DotGreen)
+    setStatus(tostring(#filtered) .. (L.mobile and " online" or " Servers Online"), C.DotGreen)
 end
 
---═══════════════ REFRESH ═══════════════
+--═══════════════ REFRESH [#6, #7] ═══════════════
 local function refresh()
     if scanning then return end
     scanning = true
-    setStatus(IsMobile and "Scanning..." or "Scanning servers...", C.DotGold)
-    RefreshBtn.Text = IsMobile and "⏳" or "⏳"
+    syncToolTexts()
+    setStatus(L.mobile and "Scanning..." or "Scanning servers...", C.DotGold)
+
+    -- [#6] clear stale entries immediately; no old data on screen mid-scan
+    for _, child in ipairs(ListFrame:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
 
     task.spawn(function()
-        allServers = fetchServers()
-        scanning = false
-        RefreshBtn.Text = IsMobile and "↻ Refresh" or "↻  Refresh"
+        -- [#7] pcall guarantees scanning resets on ANY error
+        local ok, result = pcall(fetchServers, function(found, pages)
+            if guiAlive then
+                setStatus(("Scanning p.%d — %d servers"):format(pages, found), C.DotGold)
+            end
+        end)
 
+        scanning = false
+        if not guiAlive then return end
+        syncToolTexts()
+
+        if not ok then
+            setStatus("Scan failed", C.DotRed)
+            return
+        end
+
+        allServers = result
         if #allServers == 0 then
             setStatus("No servers found", C.DotRed)
         else
@@ -642,22 +747,10 @@ local function refresh()
     end)
 end
 
---═══════════════ SORT MENU ═══════════════
-local sortOptions = { "All Servers", "Low → High", "High → Low", "Not Full Only" }
-
-local menuAnchorY = IsMobile and L.toolY or L.statusY
-local menuAnchorH = IsMobile and L.toolH or L.statusH
-
-local SortList = new("Frame", {
-    Size = UDim2.new(0, IsMobile and 150 or 140, 0, #sortOptions * L.rowH + 8),
-    Position = UDim2.new(0, L.pad, 0, menuAnchorY + menuAnchorH + 4),
-    BackgroundColor3 = C.White,
-    BorderSizePixel = 0,
-    Visible = false,
-    ZIndex = 40,
-}, MainFrame)
-corner(10, SortList)
-stroke(C.Border, 1, SortList)
+--═══════════════ SORT MENU ITEMS ═══════════════
+local function syncSortText()
+    SortBtn.Text = currentSort .. (L.mobile and " ▾" or "  ▾")
+end
 
 for i, opt in ipairs(sortOptions) do
     local ob = new("TextButton", {
@@ -673,40 +766,13 @@ for i, opt in ipairs(sortOptions) do
     ob.MouseLeave:Connect(function() ob.BackgroundColor3 = C.White end)
     ob.MouseButton1Click:Connect(function()
         currentSort = opt
-        SortBtn.Text = opt .. (IsMobile and " ▾" or "  ▾")
+        syncSortText()
         SortList.Visible = false
         renderList()
     end)
 end
 
---═══════════════ WIRING ═══════════════
-SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-    searchText = SearchBox.Text
-    renderList()
-end)
-
-SortBtn.MouseButton1Click:Connect(function()
-    SortList.Visible = not SortList.Visible
-end)
-
-RefreshBtn.MouseButton1Click:Connect(refresh)
-
-AutoBtn.MouseButton1Click:Connect(function()
-    autoOn = not autoOn
-    if autoOn then
-        AutoBtn.Text = IsMobile and "⏱ Auto ON" or "⏱  Auto: ON"
-        AutoBtn.BackgroundColor3 = C.GoldBG
-        AutoBtn.TextColor3 = C.GoldText
-        AutoStroke.Color = C.GoldBorder
-    else
-        AutoBtn.Text = IsMobile and "⏱ Auto OFF" or "⏱  Auto: OFF"
-        AutoBtn.BackgroundColor3 = C.White
-        AutoBtn.TextColor3 = Color3.fromRGB(56, 66, 54)
-        AutoStroke.Color = C.Border
-    end
-end)
-
--- Min / Max / Close
+--═══════════════ WINDOW STATE + TWEENS ═══════════════
 local isMinimized, isMaximized = false, false
 local savedSize, savedPos = NORMAL_SIZE, CENTER
 
@@ -735,44 +801,6 @@ local function restoreWindow()
     tweenFrame(size, pos)
 end
 
-MinBtn.MouseButton1Click:Connect(function()
-    if not isMinimized then
-        isMinimized = true
-        -- ✅ don't overwrite saved size while maximized
-        if not isMaximized then
-            savedSize, savedPos = MainFrame.Size, MainFrame.Position
-        end
-        MainFrame.Visible = false
-        popLogo()
-    else
-        restoreWindow()
-    end
-end)
-
-LogoFloat.MouseButton1Click:Connect(function()
-    if isMinimized and logoDragMoved() < 8 then
-        restoreWindow()
-    end
-end)
-
-MaxBtn.MouseButton1Click:Connect(function()
-    if isMinimized then return end
-    if not isMaximized then
-        isMaximized = true
-        savedSize, savedPos = MainFrame.Size, MainFrame.Position
-        MaxBtn.Text = "❐"
-        tweenFrame(MAX_SIZE, CENTER)
-    else
-        isMaximized = false
-        MaxBtn.Text = "▢"
-        tweenFrame(savedSize, savedPos)
-    end
-end)
-
-CloseBtn.MouseButton1Click:Connect(function()
-    ScreenGui:Destroy()
-end)
-
 --═══════════════ DRAGGING ═══════════════
 local function makeDraggable(handle, target)
     local dragging, dragInput, dragStart, startPos, moved = false, nil, nil, nil, 0
@@ -799,7 +827,7 @@ local function makeDraggable(handle, target)
         end
     end)
 
-    UserInputService.InputChanged:Connect(function(input)
+    track(UserInputService.InputChanged:Connect(function(input)
         if input == dragInput and dragging then
             local delta = input.Position - dragStart
             moved = math.abs(delta.X) + math.abs(delta.Y)
@@ -811,16 +839,82 @@ local function makeDraggable(handle, target)
                 savedPos = target.Position
             end
         end
-    end)
+    end))
 
     return function() return moved end
 end
 
+-- [#1] assign drag getters BEFORE any closure that reads them
 makeDraggable(Header, MainFrame)
 local logoDragMoved = makeDraggable(LogoFloat, LogoFloat)
 
--- Tap-away closes sort menu
-UserInputService.InputBegan:Connect(function(input, processed)
+--═══════════════ BUTTON WIRING ═══════════════
+MinBtn.MouseButton1Click:Connect(function()
+    if not isMinimized then
+        isMinimized = true
+        if not isMaximized then
+            savedSize, savedPos = MainFrame.Size, MainFrame.Position
+        end
+        MainFrame.Visible = false
+        popLogo()
+    else
+        restoreWindow()
+    end
+end)
+
+LogoFloat.MouseButton1Click:Connect(function()
+    -- [#1] logoDragMoved is a proper local, assigned above
+    if isMinimized and logoDragMoved() < 8 then
+        restoreWindow()
+    end
+end)
+
+MaxBtn.MouseButton1Click:Connect(function()
+    if isMinimized then return end
+    if not isMaximized then
+        isMaximized = true
+        savedSize, savedPos = MainFrame.Size, MainFrame.Position
+        MaxBtn.Text = "❐"
+        tweenFrame(MAX_SIZE, CENTER)
+    else
+        isMaximized = false
+        MaxBtn.Text = "▢"
+        tweenFrame(savedSize, savedPos)
+    end
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    cleanup()          -- [#8] disconnect all service connections
+    ScreenGui:Destroy()
+end)
+
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    searchText = SearchBox.Text
+    renderList()
+end)
+
+SortBtn.MouseButton1Click:Connect(function()
+    SortList.Visible = not SortList.Visible
+end)
+
+RefreshBtn.MouseButton1Click:Connect(refresh)
+
+AutoBtn.MouseButton1Click:Connect(function()
+    autoOn = not autoOn
+    if autoOn then
+        AutoBtn.BackgroundColor3 = C.GoldBG
+        AutoBtn.TextColor3       = C.GoldText
+        AutoStroke.Color         = C.GoldBorder
+    else
+        AutoBtn.BackgroundColor3 = C.White
+        AutoBtn.TextColor3       = Color3.fromRGB(56, 66, 54)
+        AutoStroke.Color         = C.Border
+    end
+    syncToolTexts()
+end)
+
+-- Tap/click-away closes sort menu (tracked — dies with cleanup)
+track(UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
     if (input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch)
@@ -831,32 +925,91 @@ UserInputService.InputBegan:Connect(function(input, processed)
             and p.Y >= a.Y and p.Y <= a.Y + s.Y
         if not inside then SortList.Visible = false end
     end
-end)
+end))
 
--- Recenter if viewport changes (rotation/resize)
-if workspace.CurrentCamera then
-    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-        Viewport = workspace.CurrentCamera.ViewportSize
+--═══════════════ RESPONSIVE RELAYOUT [#10, #11] ═══════════════
+local function doRelayout(vp)
+    Viewport = vp
+    L        = computeLayout(vp)
+    IsMobile = L.mobile
+
+    NORMAL_SIZE = UDim2.new(0, L.width, 0, L.height)
+    MAX_SIZE    = UDim2.new(1, IsMobile and -16 or -40, 1, IsMobile and -30 or -80)
+
+    if isMaximized then
+        MainFrame.Size = MAX_SIZE
+    elseif not isMinimized then
+        MainFrame.Size = NORMAL_SIZE
+        -- clamp back on-screen after rotation
         local abs = MainFrame.AbsolutePosition
-        if abs.X > Viewport.X - 40 or abs.Y > Viewport.Y - 40 then
+        if abs.X > vp.X - 60 or abs.Y > vp.Y - 60
+           or abs.X + MainFrame.AbsoluteSize.X < 60
+           or abs.Y + MainFrame.AbsoluteSize.Y < 60 then
             MainFrame.Position = CENTER
             savedPos = CENTER
         end
+    end
+    if isMinimized then
+        savedSize = NORMAL_SIZE -- remembered size follows new layout
+    end
+
+    SearchBox.TextSize    = L.btnText
+    SortBtn.TextSize      = L.btnText
+    RefreshBtn.TextSize   = L.btnText
+    AutoBtn.TextSize      = L.btnText
+    StatusLabel.TextSize  = L.statusText
+
+    layoutHeader()
+    layoutToolbar()
+    syncSortText()
+    syncToolTexts()
+
+    -- rebuild entries with new metrics
+    if not scanning and #allServers > 0 then
+        renderList()
+    end
+end
+
+local lastVpX, lastVpY = Viewport.X, Viewport.Y
+local relayoutPending = false
+
+local function requestRelayout()
+    if relayoutPending then return end
+    relayoutPending = true
+    task.delay(0.35, function()
+        relayoutPending = false
+        if not guiAlive then return end
+        local cam = workspace.CurrentCamera
+        local vp = cam and cam.ViewportSize or Vector2.new(lastVpX, lastVpY)
+        if math.abs(vp.X - lastVpX) < 80 and math.abs(vp.Y - lastVpY) < 80 then
+            return -- ignore tiny resizes (keyboard pop-up etc.)
+        end
+        lastVpX, lastVpY = vp.X, vp.Y
+        doRelayout(vp)
     end)
 end
 
+local function bindCamera()
+    local cam = workspace.CurrentCamera
+    if cam then
+        track(cam:GetPropertyChangedSignal("ViewportSize"):Connect(requestRelayout))
+    end
+end
+bindCamera()
+track(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(bindCamera))
+
 --═══════════════ AUTO REFRESH LOOP ═══════════════
 task.spawn(function()
-    while ScreenGui.Parent do
+    while guiAlive and ScreenGui.Parent do
         task.wait(AUTO_REFRESH_INTERVAL)
-        if autoOn and not scanning then
+        if guiAlive and autoOn and not scanning then
             refresh()
         end
     end
 end)
 
 --═══════════════ BOOT ═══════════════
-print(("🍈 DurianHub loaded! [%s | UI: %s | logo: %s]"):format(
+print(("🍈 DurianHub loaded! [%s | parent: %s | logo: %s]"):format(
     IsMobile and "MOBILE" or "PC",
     ScreenGui.Parent and ScreenGui.Parent.Name or "?",
     LOGO_ASSET and "repo ✓" or "none"
