@@ -11,7 +11,7 @@ local AUTO_REFRESH_MOBILE   = 60
 local SCAN_TIMEOUT          = 15 + MAX_PAGES * 4
 local DRAW_THROTTLE         = 0.75
 
-local LOGO_ASSET = "rbxassetid://76601069095550"
+local LOGO_ASSET = "rbxassetid://72003666603588"
 local LOGO_ZOOM  = 1.3
 
 local ICON_READY    = "🔄"
