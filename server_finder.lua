@@ -1,15 +1,3 @@
---═════════════════════════════════════════════════════════
---  🍈 DurianHub — Community Server Finder  (v2 — all fixes)
---  PC + Android • Fixes #1,3,4,5,6,7,8,9,10,11,12 + V2:
---  [V2] safe glyphs • logo fallback • progressive scan render
---       • scan watchdog • search debounce • render cap
---       • cursor encoding • height clamping • wide-device layout
---  [#2 intentionally unchanged: executor-only by design]
---═════════════════════════════════════════════════════════
-
-if not game:IsLoaded() then game.Loaded:Wait() end
-
---═══════════════ CONFIG ═══════════════
 local MAX_PAGES             = 10     -- [#4] ~1000 servers
 local PAGE_DELAY            = 0.15
 local AUTO_REFRESH_INTERVAL = 30
