@@ -1,10 +1,8 @@
 --═════════════════════════════════════════════════════════
---  🍈 DurianHub — Community Server Finder (v2.2)
---  [v2.2] logo cache validation • —/× swapped • icon refresh
---         • sort UI removed (always Low → High)
+--  🍈 DurianHub — Community Server Finder (v2.3 slim)
+--  [v2.3] logo = rbxassetid • download pipeline removed
+--         • debug prints removed • always Low → High
 --═════════════════════════════════════════════════════════
-
-print("[DurianHub] 1/3 script loaded — running")
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -16,17 +14,12 @@ local AUTO_REFRESH_MOBILE   = 60
 local SCAN_TIMEOUT          = 15 + MAX_PAGES * 4
 local DRAW_THROTTLE         = 0.75
 
--- [v2.2] LOGO — if the file download still fails on your executor, upload
--- your durian logo to Roblox as a Decal, copy its asset ID, and put it here:
-local LOGO_IMAGE_ID = 0   -- e.g. 123456789  (0 = use the GitHub/file method)
+local LOGO_ASSET = "rbxassetid://119609057160357"
 
-local LOGO_REPO = "https://raw.githubusercontent.com/iccyzsn/SAG---Server-Finder-DurianHub/main/img/"
-
--- Glyphs that render reliably on ALL platforms
 local G = {
-    close = "×",   -- U+00D7
-    max   = "□",   -- U+25A1
-    maxOn = "▣",   -- U+25A3
+    close = "×",
+    max   = "□",
+    maxOn = "▣",
 }
 
 --═══════════════ SERVICES ═══════════════
@@ -72,7 +65,7 @@ local function cleanup()
 end
 ENV.DURIANHUB_CLEANUP = cleanup
 
---═══════════════ GUI PARENT (mobile-safe) ═══════════════
+--═══════════════ GUI PARENT ═══════════════
 local function getGuiParent()
     if type(gethui) == "function" then
         local ok, ui = pcall(gethui)
@@ -143,7 +136,7 @@ local C = {
     Gold = Color3.fromRGB(224, 169, 56),
     GoldBG = Color3.fromRGB(247, 237, 213),   GoldBorder = Color3.fromRGB(235, 212, 159),
     GoldText = Color3.fromRGB(122, 81, 8),
-    Cream = Color3.fromRGB(253, 251, 244),    CreamDeep = Color3.fromRGB(245, 235, 211),
+    Cream = Color3.fromRGB(253, 251, 244),
     CardBG = Color3.fromRGB(250, 248, 244),   White = Color3.fromRGB(255, 255, 255),
     Border = Color3.fromRGB(224, 217, 204),   BorderSoft = Color3.fromRGB(236, 230, 218),
     Divider = Color3.fromRGB(239, 235, 225),
@@ -197,81 +190,6 @@ local function httpGet(url)
     return nil
 end
 
---═══════════════ LOGO [v2.2 — rewritten] ═══════════════
--- Old bug: if the first download returned a 404/error page, it was saved to
--- disk, and every future run saw "file exists" and never re-downloaded.
--- Now: validate PNG/JPEG magic bytes, delete bad cache, warn to console.
-local LOGO_ASSET = nil
-
-local function looksLikeImage(body)
-    return type(body) == "string" and #body > 8
-        and (string.sub(body, 1, 4) == "\137PNG"
-            or (string.byte(body, 1) == 0xFF and string.byte(body, 2) == 0xD8))
-end
-
-if LOGO_IMAGE_ID ~= 0 then
-    LOGO_ASSET = "rbxassetid://" .. tostring(LOGO_IMAGE_ID)
-    print("[DurianHub] logo: using rbxassetid " .. LOGO_IMAGE_ID)
-elseif writefile and isfile and readfile and getcustomasset then
-    for _, fileName in ipairs({ "DurianHub.png", "DurianHub.jpeg", "DurianHub.jpg" }) do
-        local localName = "DurianHub_" .. fileName
-        local body = nil
-
-        if isfile(localName) then
-            local ok, data = pcall(readfile, localName)
-            body = ok and data or nil
-            if not looksLikeImage(body) then
-                warn("[DurianHub] cached logo is invalid (404 page?) — deleting: " .. localName)
-                if type(delfile) == "function" then pcall(delfile, localName) end
-                body = nil
-            end
-        end
-
-        if not body then
-            body = httpGet(LOGO_REPO .. fileName)
-            if not looksLikeImage(body) then
-                warn("[DurianHub] download failed / not an image: " .. LOGO_REPO .. fileName)
-                body = nil
-            else
-                pcall(function() writefile(localName, body) end)
-            end
-        end
-
-        if body then
-            local ok, asset = pcall(getcustomasset, localName)
-            if ok and asset then
-                LOGO_ASSET = asset
-                break
-            end
-            warn("[DurianHub] getcustomasset failed for " .. localName)
-        end
-    end
-else
-    warn("[DurianHub] executor missing writefile/isfile/readfile/getcustomasset — logo fallback")
-end
-
-local function addLogo(parent, inset, textSize, zIndex)
-    if LOGO_ASSET then
-        new("ImageLabel", {
-            Size = UDim2.new(1, -inset * 2, 1, -inset * 2),
-            Position = UDim2.new(0, inset, 0, inset),
-            BackgroundTransparency = 1,
-            Image = LOGO_ASSET,
-            ScaleType = Enum.ScaleType.Fit,
-            ZIndex = zIndex,
-        }, parent)
-    else
-        new("TextLabel", {
-            Size = UDim2.new(1, 0, 1, 0),
-            BackgroundTransparency = 1,
-            Text = "🍈",
-            TextSize = textSize,
-            Font = Enum.Font.GothamBold,
-            ZIndex = zIndex,
-        }, parent)
-    end
-end
-
 --═══════════════ ROOT ═══════════════
 local ScreenGui = new("ScreenGui", {
     Name           = "DurianHub_ServerFinder",
@@ -282,8 +200,6 @@ local ScreenGui = new("ScreenGui", {
 ScreenGui.Destroying:Connect(cleanup)
 
 if type(protectgui) == "function" then pcall(protectgui, ScreenGui) end
-
-print("[DurianHub] 2/3 GUI created (parent: " .. GUI_PARENT.Name .. ")")
 
 --═══════════════ FLOATING LOGO (minimized state) ═══════════════
 local LOGO_FLOAT_SIZE = 56
@@ -301,7 +217,14 @@ local LogoFloat = new("TextButton", {
 }, ScreenGui)
 corner(16, LogoFloat)
 stroke(C.GoldBorder, 1.5, LogoFloat)
-addLogo(LogoFloat, 6, 30, 51)
+new("ImageLabel", {
+    Size = UDim2.new(1, -12, 1, -12),
+    Position = UDim2.new(0, 6, 0, 6),
+    BackgroundTransparency = 1,
+    Image = LOGO_ASSET,
+    ScaleType = Enum.ScaleType.Fit,
+    ZIndex = 51,
+}, LogoFloat)
 
 --═══════════════ MAIN FRAME ═══════════════
 local NORMAL_SIZE = UDim2.new(0, L.width, 0, L.height)
@@ -335,7 +258,13 @@ local IconBox = new("Frame", {
 }, Header)
 corner(math.floor(L.logoSize * 0.29), IconBox)
 stroke(Color3.fromRGB(224, 206, 158), 1, IconBox)
-addLogo(IconBox, 5, 24, 1)
+new("ImageLabel", {
+    Size = UDim2.new(1, -10, 1, -10),
+    Position = UDim2.new(0, 5, 0, 5),
+    BackgroundTransparency = 1,
+    Image = LOGO_ASSET,
+    ScaleType = Enum.ScaleType.Fit,
+}, IconBox)
 
 local DurianLabel = new("TextLabel", {
     Size = UDim2.new(0, 66, 0, 22),
@@ -396,7 +325,6 @@ local function windowButton(text, xOffset, isClose)
     return btn
 end
 
--- [v2.2] swapped: standard order — □ ×   (× is now rightmost)
 local CloseBtn = windowButton(G.close, 0, true)
 local MaxBtn   = windowButton(G.max, IsMobile and -42 or -38, false)
 local MinBtn   = windowButton("—", IsMobile and -84 or -76, false)
@@ -408,7 +336,7 @@ local Divider = new("Frame", {
     BorderSizePixel  = 0,
 }, MainFrame)
 
---═══════════════ TOOLBAR ELEMENTS ═══════════════
+--═══════════════ TOOLBAR ═══════════════
 local SearchBox = new("TextBox", {
     Position         = UDim2.new(0, L.pad, 0, L.searchY),
     Size             = UDim2.new(1, -2 * L.pad, 0, L.searchH),
@@ -436,25 +364,7 @@ SearchBox.FocusLost:Connect(function()
     SearchStroke.Color = C.Border
 end)
 
-local function toolButton(text)
-    local btn = new("TextButton", {
-        Position         = UDim2.new(0, 0, 0, 0),
-        Size             = UDim2.new(0, 80, 0, L.toolH),
-        BackgroundColor3 = C.White,
-        Text             = text,
-        TextColor3       = Color3.fromRGB(56, 66, 54),
-        TextSize         = L.btnText,
-        Font             = Enum.Font.GothamBold,
-        AutoButtonColor  = false,
-    }, MainFrame)
-    corner(9, btn)
-    local st = stroke(C.Border, 1, btn)
-    btn.MouseEnter:Connect(function() btn.BackgroundColor3 = C.HoverCream end)
-    btn.MouseLeave:Connect(function() btn.BackgroundColor3 = C.White end)
-    return btn, st
-end
-
--- [v2.2] Refresh = standalone green circular ICON button
+-- Refresh: green circle icon — ↻ when ready, ⏳ while scanning
 local RefreshBtn = new("TextButton", {
     Position         = UDim2.new(0, 0, 0, 0),
     Size             = UDim2.new(0, 36, 0, 36),
@@ -469,7 +379,23 @@ corner(18, RefreshBtn)
 RefreshBtn.MouseEnter:Connect(function() RefreshBtn.BackgroundColor3 = C.Sage end)
 RefreshBtn.MouseLeave:Connect(function() RefreshBtn.BackgroundColor3 = C.Forest end)
 
-local AutoBtn, AutoStroke = toolButton("⏱  Auto: ON")
+local AutoBtn, AutoStroke = (function()
+    local btn = new("TextButton", {
+        Size             = UDim2.new(0, 80, 0, L.toolH),
+        BackgroundColor3 = C.White,
+        Text             = "⏱  Auto: ON",
+        TextColor3       = Color3.fromRGB(56, 66, 54),
+        TextSize         = L.btnText,
+        Font             = Enum.Font.GothamBold,
+        AutoButtonColor  = false,
+    }, MainFrame)
+    corner(9, btn)
+    local st = stroke(C.Border, 1, btn)
+    btn.MouseEnter:Connect(function() btn.BackgroundColor3 = C.HoverCream end)
+    btn.MouseLeave:Connect(function() btn.BackgroundColor3 = C.White end)
+    return btn, st
+end)()
+
 AutoBtn.BackgroundColor3 = C.GoldBG
 AutoBtn.TextColor3       = C.GoldText
 AutoStroke.Color         = C.GoldBorder
@@ -522,7 +448,7 @@ new("UIListLayout", {
     Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder,
 }, ListFrame)
 
---═══════════════ LAYOUT FUNCTIONS ═══════════════
+--═══════════════ LAYOUT ═══════════════
 local function layoutHeader()
     Header.Size  = UDim2.new(1, -2 * L.pad, 0, L.headerH)
     IconBox.Size = UDim2.new(0, L.logoSize, 0, L.logoSize)
@@ -633,7 +559,6 @@ local function renderList()
         end
     end
 
-    -- [v2.2] sort UI removed — ALWAYS lowest population first
     table.sort(filtered, function(a, b) return a.playing < b.playing end)
 
     local cap = L.mobile and 150 or 400
@@ -815,7 +740,7 @@ local function refresh()
     end)
 end
 
---═══════════════ WINDOW STATE + TWEENS ═══════════════
+--═══════════════ WINDOW STATE ═══════════════
 local isMinimized, isMaximized = false, false
 local savedSize, savedPos = NORMAL_SIZE, CENTER
 
@@ -1032,9 +957,5 @@ task.spawn(function()
 end)
 
 --═══════════════ BOOT ═══════════════
-print("[DurianHub] 3/3 fully loaded — starting scan")
-print(("🍈 DurianHub v2.2 [%s | logo: %s]"):format(
-    IsMobile and "MOBILE" or "PC",
-    LOGO_ASSET and "loaded ✓" or "🍈 fallback"
-))
+print(("🍈 DurianHub v2.3 loaded [%s]"):format(IsMobile and "MOBILE" or "PC"))
 refresh()
