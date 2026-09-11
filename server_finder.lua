@@ -206,7 +206,8 @@ ScreenGui.Destroying:Connect(cleanup)
 if type(protectgui) == "function" then pcall(protectgui, ScreenGui) end
 
 --═══════════════ FLOATING LOGO (minimized state) ═══════════════
-local LOGO_FLOAT_SIZE = 56
+local LOGO_FLOAT_SIZE = 44   -- was 56 — smaller floating button
+local LOGO_ZOOM       = 1.3  -- >1 crops the asset's baked-in whitespace (tune 1.1–1.5)
 
 local LogoFloat = new("TextButton", {
     AnchorPoint      = Vector2.new(0.5, 0.5),
@@ -219,16 +220,26 @@ local LogoFloat = new("TextButton", {
     Visible          = false,
     ZIndex           = 50,
 }, ScreenGui)
-corner(16, LogoFloat)
+corner(math.floor(LOGO_FLOAT_SIZE * 0.29), LogoFloat)
 stroke(C.GoldBorder, 1.5, LogoFloat)
-new("ImageLabel", {
-    Size = UDim2.new(1, -12, 1, -12),
-    Position = UDim2.new(0, 6, 0, 6),
+
+-- clipping wrapper: the zoomed image gets cropped instead of spilling out
+local LogoClip = new("Frame", {
+    Size                   = UDim2.new(1, 0, 1, 0),
     BackgroundTransparency = 1,
-    Image = LOGO_ASSET,
-    ScaleType = Enum.ScaleType.Fit,
-    ZIndex = 51,
+    ClipsDescendants       = true,
+    ZIndex                 = 51,
 }, LogoFloat)
+
+new("ImageLabel", {
+    AnchorPoint            = Vector2.new(0.5, 0.5),
+    Position               = UDim2.new(0.5, 0, 0.5, 0),
+    Size                   = UDim2.new(LOGO_ZOOM, 0, LOGO_ZOOM, 0),
+    BackgroundTransparency = 1,
+    Image                  = LOGO_ASSET,
+    ScaleType              = Enum.ScaleType.Fit,
+    ZIndex                 = 51,
+}, LogoClip)
 
 --═══════════════ MAIN FRAME ═══════════════
 local NORMAL_SIZE = UDim2.new(0, L.width, 0, L.height)
