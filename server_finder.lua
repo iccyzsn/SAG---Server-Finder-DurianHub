@@ -1,11 +1,9 @@
 --═════════════════════════════════════════════════════════
---  🍈 DurianHub — Community Server Finder (v2.4)
---  [v2.4] texture-ID logo • emoji refresh glyph • no rank marks
+-- ICE CUBE HUB | OPEN SRC made by @iccyzsn
 --═════════════════════════════════════════════════════════
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
---═══════════════ CONFIG ═══════════════
 local MAX_PAGES             = 10
 local PAGE_DELAY            = 0.15
 local AUTO_REFRESH_INTERVAL = 30
@@ -14,9 +12,8 @@ local SCAN_TIMEOUT          = 15 + MAX_PAGES * 4
 local DRAW_THROTTLE         = 0.75
 
 local LOGO_ASSET = "rbxassetid://76601069095550"
+local LOGO_ZOOM  = 1.3
 
--- The old arrow glyph is missing from Roblox fonts on Android (renders as
--- a rectangle box). Real emoji always render, so we use those instead.
 local ICON_READY    = "🔄"
 local ICON_SCANNING = "⏳"
 
@@ -26,7 +23,6 @@ local G = {
     maxOn = "▣",
 }
 
---═══════════════ SERVICES ═══════════════
 local HttpService        = game:GetService("HttpService")
 local TweenService       = game:GetService("TweenService")
 local TeleportService    = game:GetService("TeleportService")
@@ -42,7 +38,6 @@ pcall(function()
     GameName = MarketplaceService:GetProductInfo(PlaceId).Name or GameName
 end)
 
---═══════════════ CLEANUP REGISTRY ═══════════════
 local ENV = (type(getgenv) == "function" and getgenv()) or _G
 if ENV.DURIANHUB_CLEANUP then
     pcall(ENV.DURIANHUB_CLEANUP)
@@ -69,7 +64,6 @@ local function cleanup()
 end
 ENV.DURIANHUB_CLEANUP = cleanup
 
---═══════════════ GUI PARENT ═══════════════
 local function getGuiParent()
     if type(gethui) == "function" then
         local ok, ui = pcall(gethui)
@@ -92,7 +86,6 @@ local GUI_PARENT = getGuiParent()
 local oldGui = GUI_PARENT:FindFirstChild("DurianHub_ServerFinder")
 if oldGui then oldGui:Destroy() end
 
---═══════════════ DEVICE / LAYOUT ═══════════════
 local Viewport = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize)
     or Vector2.new(1280, 720)
 
@@ -134,7 +127,6 @@ end
 local L        = computeLayout(Viewport)
 local IsMobile = L.mobile
 
---═══════════════ PALETTE ═══════════════
 local C = {
     Forest = Color3.fromRGB(36, 72, 32),      Sage = Color3.fromRGB(59, 107, 53),
     Gold = Color3.fromRGB(224, 169, 56),
@@ -155,13 +147,11 @@ local C = {
     InputBG = Color3.fromRGB(250, 248, 243),
 }
 
---═══════════════ STATE ═══════════════
 local allServers = {}
 local autoOn     = true
 local scanning   = false
 local searchText = ""
 
---═══════════════ HELPERS ═══════════════
 local function new(class, props, parent)
     local inst = Instance.new(class)
     for k, v in pairs(props) do
@@ -194,7 +184,6 @@ local function httpGet(url)
     return nil
 end
 
---═══════════════ ROOT ═══════════════
 local ScreenGui = new("ScreenGui", {
     Name           = "DurianHub_ServerFinder",
     ResetOnSpawn   = false,
@@ -205,9 +194,7 @@ ScreenGui.Destroying:Connect(cleanup)
 
 if type(protectgui) == "function" then pcall(protectgui, ScreenGui) end
 
---═══════════════ FLOATING LOGO (minimized state) ═══════════════
-local LOGO_FLOAT_SIZE = 30  -- was 56 — smaller floating button
-local LOGO_ZOOM       = 1  -- >1 crops the asset's baked-in whitespace (tune 1.1–1.5)
+local LOGO_FLOAT_SIZE = 44
 
 local LogoFloat = new("TextButton", {
     AnchorPoint      = Vector2.new(0.5, 0.5),
@@ -223,7 +210,6 @@ local LogoFloat = new("TextButton", {
 corner(math.floor(LOGO_FLOAT_SIZE * 0.29), LogoFloat)
 stroke(C.GoldBorder, 1.5, LogoFloat)
 
--- clipping wrapper: the zoomed image gets cropped instead of spilling out
 local LogoClip = new("Frame", {
     Size                   = UDim2.new(1, 0, 1, 0),
     BackgroundTransparency = 1,
@@ -241,7 +227,6 @@ new("ImageLabel", {
     ZIndex                 = 51,
 }, LogoClip)
 
---═══════════════ MAIN FRAME ═══════════════
 local NORMAL_SIZE = UDim2.new(0, L.width, 0, L.height)
 local MAX_SIZE    = UDim2.new(1, IsMobile and -16 or -40, 1, IsMobile and -30 or -80)
 local CENTER      = UDim2.new(0.5, 0, 0.5, 0)
@@ -257,7 +242,6 @@ local MainFrame = new("Frame", {
 corner(20, MainFrame)
 stroke(Color3.fromRGB(230, 224, 212), 1, MainFrame)
 
---═══════════════ HEADER ═══════════════
 local Header = new("Frame", {
     Size                   = UDim2.new(1, -2 * L.pad, 0, L.headerH),
     Position               = UDim2.new(0, L.pad, 0, 12),
@@ -273,13 +257,22 @@ local IconBox = new("Frame", {
 }, Header)
 corner(math.floor(L.logoSize * 0.29), IconBox)
 stroke(Color3.fromRGB(224, 206, 158), 1, IconBox)
-new("ImageLabel", {
-    Size = UDim2.new(1, -10, 1, -10),
-    Position = UDim2.new(0, 5, 0, 5),
+
+local IconClip = new("Frame", {
+    Size                   = UDim2.new(1, -10, 1, -10),
+    Position               = UDim2.new(0, 5, 0, 5),
     BackgroundTransparency = 1,
-    Image = LOGO_ASSET,
-    ScaleType = Enum.ScaleType.Fit,
+    ClipsDescendants       = true,
 }, IconBox)
+
+new("ImageLabel", {
+    AnchorPoint            = Vector2.new(0.5, 0.5),
+    Position               = UDim2.new(0.5, 0, 0.5, 0),
+    Size                   = UDim2.new(LOGO_ZOOM, 0, LOGO_ZOOM, 0),
+    BackgroundTransparency = 1,
+    Image                  = LOGO_ASSET,
+    ScaleType              = Enum.ScaleType.Fit,
+}, IconClip)
 
 local DurianLabel = new("TextLabel", {
     Size = UDim2.new(0, 66, 0, 22),
@@ -351,7 +344,6 @@ local Divider = new("Frame", {
     BorderSizePixel  = 0,
 }, MainFrame)
 
---═══════════════ TOOLBAR ═══════════════
 local SearchBox = new("TextBox", {
     Position         = UDim2.new(0, L.pad, 0, L.searchY),
     Size             = UDim2.new(1, -2 * L.pad, 0, L.searchH),
@@ -379,7 +371,6 @@ SearchBox.FocusLost:Connect(function()
     SearchStroke.Color = C.Border
 end)
 
--- Refresh: green circle icon — ready emoji when idle, hourglass while scanning
 local RefreshBtn = new("TextButton", {
     Position         = UDim2.new(0, 0, 0, 0),
     Size             = UDim2.new(0, 36, 0, 36),
@@ -448,7 +439,6 @@ local StatusLabel = new("TextLabel", {
     Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left,
 }, StatusBadge)
 
---═══════════════ SERVER LIST ═══════════════
 local ListFrame = new("ScrollingFrame", {
     Position             = UDim2.new(0, L.pad, 0, L.listY),
     Size                 = UDim2.new(1, -2 * L.pad, 1, -(L.listY + 12)),
@@ -463,7 +453,6 @@ new("UIListLayout", {
     Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder,
 }, ListFrame)
 
---═══════════════ LAYOUT ═══════════════
 local function layoutHeader()
     Header.Size  = UDim2.new(1, -2 * L.pad, 0, L.headerH)
     IconBox.Size = UDim2.new(0, L.logoSize, 0, L.logoSize)
@@ -516,7 +505,6 @@ layoutHeader()
 layoutToolbar()
 syncToolTexts()
 
---═══════════════ FETCH ═══════════════
 local function fetchServers(onProgress)
     local servers, cursor, pages = {}, nil, 0
     repeat
@@ -544,7 +532,6 @@ local function fetchServers(onProgress)
     return servers
 end
 
---═══════════════ RENDER ═══════════════
 local function setStatus(text, dotColor)
     StatusLabel.Text = text
     StatusDot.BackgroundColor3 = dotColor or C.DotGreen
@@ -574,7 +561,6 @@ local function renderList()
         end
     end
 
-    -- always lowest population first
     table.sort(filtered, function(a, b) return a.playing < b.playing end)
 
     local cap = L.mobile and 150 or 400
@@ -691,7 +677,6 @@ local function renderList()
     end
 end
 
---═══════════════ REFRESH ═══════════════
 local scanId = 0
 
 local function refresh()
@@ -749,14 +734,12 @@ local function refresh()
         else
             local r, err = pcall(renderList)
             if not r then
-                warn("[DurianHub] renderList error:", err)
                 setStatus("Render error", C.DotRed)
             end
         end
     end)
 end
 
---═══════════════ WINDOW STATE ═══════════════
 local isMinimized, isMaximized = false, false
 local savedSize, savedPos = NORMAL_SIZE, CENTER
 
@@ -770,7 +753,7 @@ end
 
 local function popLogo()
     LogoFloat.Visible = true
-    LogoFloat.Size = UDim2.new(0, 34, 0, 34)
+    LogoFloat.Size = UDim2.new(0, 28, 0, 28)
     TweenService:Create(LogoFloat,
         TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
         { Size = UDim2.new(0, LOGO_FLOAT_SIZE, 0, LOGO_FLOAT_SIZE) }):Play()
@@ -785,7 +768,6 @@ local function restoreWindow()
     tweenFrame(size, pos)
 end
 
---═══════════════ DRAGGING ═══════════════
 local function makeDraggable(handle, target)
     local dragging, dragInput, dragStart, startPos, moved = false, nil, nil, nil, 0
 
@@ -831,7 +813,6 @@ end
 makeDraggable(Header, MainFrame)
 local logoDragMoved = makeDraggable(LogoFloat, LogoFloat)
 
---═══════════════ BUTTON WIRING ═══════════════
 MinBtn.MouseButton1Click:Connect(function()
     if not isMinimized then
         isMinimized = true
@@ -896,7 +877,6 @@ AutoBtn.MouseButton1Click:Connect(function()
     syncToolTexts()
 end)
 
---═══════════════ RESPONSIVE RELAYOUT ═══════════════
 local function doRelayout(vp)
     Viewport = vp
     L        = computeLayout(vp)
@@ -962,7 +942,6 @@ end
 bindCamera()
 track(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(bindCamera))
 
---═══════════════ AUTO REFRESH LOOP ═══════════════
 task.spawn(function()
     while guiAlive and ScreenGui.Parent do
         task.wait(L.mobile and AUTO_REFRESH_MOBILE or AUTO_REFRESH_INTERVAL)
@@ -972,6 +951,4 @@ task.spawn(function()
     end
 end)
 
---═══════════════ BOOT ═══════════════
-print(("🍈 DurianHub v2.4 loaded [%s]"):format(IsMobile and "MOBILE" or "PC"))
 refresh()
