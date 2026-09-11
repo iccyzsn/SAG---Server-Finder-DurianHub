@@ -1,20 +1,34 @@
---═══════════════════════════════════════════════════════════
---  🍈 DurianHub — Community Server Finder
---  PC + Android • Fixes #1,3,4,5,6,7,8,9,10,11,12
+--═════════════════════════════════════════════════════════
+--  🍈 DurianHub — Community Server Finder  (v2 — all fixes)
+--  PC + Android • Fixes #1,3,4,5,6,7,8,9,10,11,12 + V2:
+--  [V2] safe glyphs • logo fallback • progressive scan render
+--       • scan watchdog • search debounce • render cap
+--       • cursor encoding • height clamping • wide-device layout
 --  [#2 intentionally unchanged: executor-only by design]
---═══════════════════════════════════════════════════════════
+--═════════════════════════════════════════════════════════
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 --═══════════════ CONFIG ═══════════════
-local MAX_PAGES             = 10     -- [#4] was 3 (~300 servers); now ~1000
-local PAGE_DELAY            = 0.15   -- pause between API pages (rate-limit safety)
+local MAX_PAGES             = 10     -- [#4] ~1000 servers
+local PAGE_DELAY            = 0.15
 local AUTO_REFRESH_INTERVAL = 30
+local AUTO_REFRESH_MOBILE   = 60     -- [V2] mobile HTTP is slow; refresh less often
+local SCAN_TIMEOUT          = 15 + MAX_PAGES * 4  -- [V2] watchdog for hung HttpGet
+local DRAW_THROTTLE         = 0.75   -- [V2] min seconds between progressive renders
 local LOGO_REPO = "https://raw.githubusercontent.com/iccyzsn/SAG---Server-Finder-DurianHub/main/img/"
 
 -- [#5] NOTE: the API's sortOrder is NOT a guarantee of lowest-population
 -- ordering. We sort locally on every render; MAX_PAGES controls coverage.
--- Raise MAX_PAGES for deeper scans (each page = 100 servers).
+
+-- [V2] glyph set that renders reliably in Roblox on ALL platforms.
+-- The old ones (✕ ▾ ▢ ❐) show as tofu boxes ▯ on Android.
+local G = {
+    close = "×",   -- U+00D7
+    max   = "□",   -- U+25A1
+    maxOn = "▣",   -- U+25A3
+    drop  = "▼",   -- U+25BC
+}
 
 --═══════════════ SERVICES ═══════════════
 local HttpService        = game:GetService("HttpService")
@@ -33,9 +47,6 @@ pcall(function()
 end)
 
 --═══════════════ CLEANUP REGISTRY [#8, #9] ═══════════════
--- Service-level connections (UserInputService, workspace) survive
--- ScreenGui:Destroy(). Every run registers a cleanup fn; the next run
--- (or Destroying) disconnects everything from the previous run.
 local ENV = (type(getgenv) == "function" and getgenv()) or _G
 if ENV.DURIANHUB_CLEANUP then
     pcall(ENV.DURIANHUB_CLEANUP)
@@ -73,8 +84,8 @@ local function getGuiParent()
         probe.Name = "__DH_Probe"
         probe.Parent = game:GetService("CoreGui")
     end)
+    pcall(function() probe:Destroy() end) -- [V2] don't leak the probe either way
     if canCore then
-        probe:Destroy()
         return game:GetService("CoreGui")
     end
     return LocalPlayer:WaitForChild("PlayerGui")
@@ -83,7 +94,7 @@ end
 local GUI_PARENT = getGuiParent()
 
 local oldGui = GUI_PARENT:FindFirstChild("DurianHub_ServerFinder")
-if oldGui then oldGui:Destroy() end -- fires old run's Destroying → old cleanup
+if oldGui then oldGui:Destroy() end
 
 --═══════════════ DEVICE / LAYOUT [#10, #11] ═══════════════
 local Viewport = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize)
@@ -93,6 +104,8 @@ local function computeLayout(vp)
     local mobile = (UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
         or vp.X < 600
     if mobile then
+        -- [V2] landscape phones / tablets get a wider window, not a cramped 400px
+        local wide = vp.X > vp.Y and vp.X >= 700
         return {
             mobile = true,
             pad = 12, headerH = 44, logoSize = 40,
@@ -101,8 +114,9 @@ local function computeLayout(vp)
             toolY   = 110, toolH = 34,
             statusY = 150, statusH = 24, statusText = 11,
             listY   = 180,
-            width   = math.clamp(vp.X - 20, 300, 400),
-            height  = math.clamp(vp.Y - 40, 360, 540),
+            width   = math.clamp(vp.X - 20, 300, wide and 560 or 400),
+            -- [V2] never taller than the screen (overflowed landscape phones before)
+            height  = math.min(math.clamp(vp.Y - 30, 360, 540), vp.Y - 16),
             entryH  = 62, joinW = 84, joinH = 38,
             btnText = 12, metaText = 11, titleText = 13, rowH = 34,
         }
@@ -115,7 +129,9 @@ local function computeLayout(vp)
             toolY   = 78,  toolH = 36,
             statusY = 122, statusH = 28, statusText = 12,
             listY   = 158,
-            width   = 560, height = 480,
+            width   = 560,
+            -- [V2] was fixed 480 → overflowed short laptop viewports
+            height  = math.min(math.clamp(vp.Y - 60, 340, 520), vp.Y - 40),
             entryH  = 56, joinW = 92, joinH = 34,
             btnText = 13, metaText = 12, titleText = 13, rowH = 30,
         }
@@ -148,7 +164,7 @@ local C = {
 
 --═══════════════ STATE ═══════════════
 local allServers = {}
-local currentSort = "Low → High"   -- [#3] was "All Servers" — purpose is least players
+local currentSort = "Low → High"   -- [#3]
 local autoOn     = true
 local scanning   = false
 local searchText = ""
@@ -207,6 +223,30 @@ if writefile and isfile and getcustomasset then
     end
 end
 
+-- [V2] logo renderer with 🍈 fallback when no asset is available
+-- (the old code left an empty cream box if the download failed)
+local function addLogo(parent, inset, textSize, zIndex)
+    if LOGO_ASSET then
+        new("ImageLabel", {
+            Size = UDim2.new(1, -inset * 2, 1, -inset * 2),
+            Position = UDim2.new(0, inset, 0, inset),
+            BackgroundTransparency = 1,
+            Image = LOGO_ASSET,
+            ScaleType = Enum.ScaleType.Fit,
+            ZIndex = zIndex,
+        }, parent)
+    else
+        new("TextLabel", {
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            Text = "🍈",
+            TextSize = textSize,
+            Font = Enum.Font.GothamBold,
+            ZIndex = zIndex,
+        }, parent)
+    end
+end
+
 --═══════════════ ROOT ═══════════════
 local ScreenGui = new("ScreenGui", {
     Name           = "DurianHub_ServerFinder",
@@ -214,7 +254,7 @@ local ScreenGui = new("ScreenGui", {
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     DisplayOrder   = 999,
 }, GUI_PARENT)
-ScreenGui.Destroying:Connect(cleanup) -- [#8] cleanup on any destroy path
+ScreenGui.Destroying:Connect(cleanup) -- [#8]
 
 if type(protectgui) == "function" then pcall(protectgui, ScreenGui) end
 
@@ -234,17 +274,7 @@ local LogoFloat = new("TextButton", {
 }, ScreenGui)
 corner(16, LogoFloat)
 stroke(C.GoldBorder, 1.5, LogoFloat)
-
-if LOGO_ASSET then
-    new("ImageLabel", {
-        Size = UDim2.new(1, -12, 1, -12),
-        Position = UDim2.new(0, 6, 0, 6),
-        BackgroundTransparency = 1,
-        Image = LOGO_ASSET,
-        ScaleType = Enum.ScaleType.Fit,
-        ZIndex = 51,
-    }, LogoFloat)
-end
+addLogo(LogoFloat, 6, 30, 51)
 
 --═══════════════ MAIN FRAME ═══════════════
 local NORMAL_SIZE = UDim2.new(0, L.width, 0, L.height)
@@ -278,15 +308,7 @@ local IconBox = new("Frame", {
 }, Header)
 corner(math.floor(L.logoSize * 0.29), IconBox)
 stroke(Color3.fromRGB(224, 206, 158), 1, IconBox)
-if LOGO_ASSET then
-    new("ImageLabel", {
-        Size = UDim2.new(1, -10, 1, -10),
-        Position = UDim2.new(0, 5, 0, 5),
-        BackgroundTransparency = 1,
-        Image = LOGO_ASSET,
-        ScaleType = Enum.ScaleType.Fit,
-    }, IconBox)
-end
+addLogo(IconBox, 5, 24, 1)
 
 local DurianLabel = new("TextLabel", {
     Size = UDim2.new(0, 66, 0, 22),
@@ -348,8 +370,8 @@ local function windowButton(text, xOffset, isClose)
 end
 
 local MinBtn   = windowButton("—", 0, false)
-local MaxBtn   = windowButton("▢", IsMobile and -42 or -38, false)
-local CloseBtn = windowButton("✕", IsMobile and -84 or -76, true)
+local MaxBtn   = windowButton(G.max, IsMobile and -42 or -38, false)
+local CloseBtn = windowButton(G.close, IsMobile and -84 or -76, true)
 
 local Divider = new("Frame", {
     Size             = UDim2.new(1, -2 * L.pad, 0, 1),
@@ -369,9 +391,13 @@ local SearchBox = new("TextBox", {
     TextColor3       = C.Text,
     TextSize         = L.btnText,
     Font             = Enum.Font.GothamMedium,
+    TextXAlignment   = Enum.TextXAlignment.Left,  -- [V2] was dead-center
     ClearTextOnFocus = false,
 }, MainFrame)
 corner(9, SearchBox)
+new("UIPadding", { -- [V2]
+    PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10),
+}, SearchBox)
 local SearchStroke = stroke(C.Border, 1, SearchBox)
 SearchBox.Focused:Connect(function()
     SearchBox.BackgroundColor3 = C.White
@@ -400,7 +426,7 @@ local function toolButton(text)
     return btn, st
 end
 
-local SortBtn    = toolButton(currentSort .. "  ▾")
+local SortBtn    = toolButton(currentSort .. "  " .. G.drop)
 local RefreshBtn, RefreshStroke = toolButton("↻  Refresh")
 local AutoBtn, AutoStroke       = toolButton("⏱  Auto: ON")
 
@@ -536,12 +562,17 @@ layoutToolbar()
 syncToolTexts()
 
 --═══════════════ FETCH [#4, #5] ═══════════════
+-- [V2] onProgress now receives the live servers table so the UI can
+-- render results progressively instead of staring at a blank list.
 local function fetchServers(onProgress)
     local servers, cursor, pages = {}, nil, 0
     repeat
         local url = "https://games.roblox.com/v1/games/" .. PlaceId
             .. "/servers/Public?sortOrder=Asc&limit=100"
-        if cursor then url = url .. "&cursor=" .. cursor end
+        if cursor then
+            -- [V2] cursors are base64-ish and can contain URL-unsafe chars
+            url = url .. "&cursor=" .. HttpService:UrlEncode(cursor)
+        end
 
         local body = httpGet(url)
         if not body then break end
@@ -551,7 +582,7 @@ local function fetchServers(onProgress)
 
         for _, s in ipairs(data.data or {}) do table.insert(servers, s) end
         pages += 1
-        if onProgress then onProgress(#servers, pages) end
+        if onProgress then onProgress(servers, pages) end
 
         cursor = data.nextPageCursor
         if cursor and pages < MAX_PAGES then
@@ -603,6 +634,13 @@ local function renderList()
         table.sort(filtered, function(a, b) return a.playing < b.playing end)
     elseif currentSort == "High → Low" then
         table.sort(filtered, function(a, b) return a.playing > b.playing end)
+    end
+
+    -- [V2] render cap: rebuilding 1000 rows on a phone causes lag spikes
+    local cap = L.mobile and 150 or 400
+    local total = #filtered
+    if total > cap then
+        for i = cap + 1, total do filtered[i] = nil end
     end
 
     -- [#12] per-mode width budget so title/tag/meta never fight the Join btn
@@ -706,50 +744,90 @@ local function renderList()
         end)
     end
 
-    setStatus(tostring(#filtered) .. (L.mobile and " online" or " Servers Online"), C.DotGreen)
+    -- [V2] don't clobber the "Scanning…" status during progressive renders
+    if not scanning then
+        if total > cap then
+            setStatus(("%d found · showing %d"):format(total, cap), C.DotGreen)
+        else
+            setStatus(tostring(total) .. (L.mobile and " online" or " Servers Online"), C.DotGreen)
+        end
+    end
 end
 
 --═══════════════ REFRESH [#6, #7] ═══════════════
+local scanId = 0
+
 local function refresh()
     if scanning then return end
     scanning = true
+    scanId += 1
+    local myScan = scanId
     syncToolTexts()
     setStatus(L.mobile and "Scanning..." or "Scanning servers...", C.DotGold)
 
-    -- [#6] clear stale entries immediately; no old data on screen mid-scan
-    for _, child in ipairs(ListFrame:GetChildren()) do
-        if child:IsA("Frame") then child:Destroy() end
-    end
+    -- [V2] watchdog: if the executor's HttpGet hangs forever, un-stick the
+    -- UI and keep whatever partial results we already have on screen.
+    local watchdog = task.delay(SCAN_TIMEOUT, function()
+        if myScan ~= scanId or not scanning then return end
+        scanId += 1 -- invalidate the in-flight scan's completion
+        scanning = false
+        if guiAlive then
+            syncToolTexts()
+            if #allServers > 0 then pcall(renderList) end
+            setStatus("Scan timed out — showing partial results", C.DotRed)
+        end
+    end)
 
     task.spawn(function()
         -- [#7] pcall guarantees scanning resets on ANY error
-        local ok, result = pcall(fetchServers, function(found, pages)
+        local lastDraw = 0
+        local ok, result = pcall(fetchServers, function(servers, pages)
+            if not guiAlive or myScan ~= scanId then return end
+            allServers = servers
+            -- [#6 → V2] NO pre-clear: old rows stay visible, new results
+            -- stream in every DRAW_THROTTLE seconds instead of a blank list
+            if os.clock() - lastDraw >= DRAW_THROTTLE then
+                lastDraw = os.clock()
+                pcall(renderList) -- [V2] a render error can't kill the scan thread
+            end
             if guiAlive then
-                setStatus(("Scanning p.%d — %d servers"):format(pages, found), C.DotGold)
+                setStatus(("Scanning p.%d — %d found"):format(pages, #servers), C.DotGold)
             end
         end)
 
+        pcall(task.cancel, watchdog) -- [V2] disarm watchdog (no-op if already fired)
+
+        if myScan ~= scanId then return end -- superseded by watchdog / newer scan
         scanning = false
         if not guiAlive then return end
         syncToolTexts()
 
         if not ok then
             setStatus("Scan failed", C.DotRed)
+            if #allServers > 0 then pcall(renderList) end
             return
         end
 
-        allServers = result
+        allServers = result or {}
         if #allServers == 0 then
+            -- [V2] only now is it correct to clear — there is genuinely nothing
+            for _, child in ipairs(ListFrame:GetChildren()) do
+                if child:IsA("Frame") then child:Destroy() end
+            end
             setStatus("No servers found", C.DotRed)
         else
-            renderList()
+            local r, err = pcall(renderList)
+            if not r then
+                warn("[DurianHub] renderList error:", err)
+                setStatus("Render error", C.DotRed)
+            end
         end
     end)
 end
 
 --═══════════════ SORT MENU ITEMS ═══════════════
 local function syncSortText()
-    SortBtn.Text = currentSort .. (L.mobile and " ▾" or "  ▾")
+    SortBtn.Text = currentSort .. (L.mobile and " " or "  ") .. G.drop
 end
 
 for i, opt in ipairs(sortOptions) do
@@ -863,7 +941,6 @@ MinBtn.MouseButton1Click:Connect(function()
 end)
 
 LogoFloat.MouseButton1Click:Connect(function()
-    -- [#1] logoDragMoved is a proper local, assigned above
     if isMinimized and logoDragMoved() < 8 then
         restoreWindow()
     end
@@ -874,23 +951,29 @@ MaxBtn.MouseButton1Click:Connect(function()
     if not isMaximized then
         isMaximized = true
         savedSize, savedPos = MainFrame.Size, MainFrame.Position
-        MaxBtn.Text = "❐"
+        MaxBtn.Text = G.maxOn
         tweenFrame(MAX_SIZE, CENTER)
     else
         isMaximized = false
-        MaxBtn.Text = "▢"
+        MaxBtn.Text = G.max
         tweenFrame(savedSize, savedPos)
     end
 end)
 
 CloseBtn.MouseButton1Click:Connect(function()
-    cleanup()          -- [#8] disconnect all service connections
+    cleanup()          -- [#8]
     ScreenGui:Destroy()
 end)
 
+-- [V2] debounce: previously this re-rendered the whole list on EVERY keystroke
+local searchToken = 0
 SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
     searchText = SearchBox.Text
-    renderList()
+    searchToken += 1
+    local my = searchToken
+    task.delay(0.2, function()
+        if my == searchToken and guiAlive then renderList() end
+    end)
 end)
 
 SortBtn.MouseButton1Click:Connect(function()
@@ -940,7 +1023,6 @@ local function doRelayout(vp)
         MainFrame.Size = MAX_SIZE
     elseif not isMinimized then
         MainFrame.Size = NORMAL_SIZE
-        -- clamp back on-screen after rotation
         local abs = MainFrame.AbsolutePosition
         if abs.X > vp.X - 60 or abs.Y > vp.Y - 60
            or abs.X + MainFrame.AbsoluteSize.X < 60
@@ -950,7 +1032,7 @@ local function doRelayout(vp)
         end
     end
     if isMinimized then
-        savedSize = NORMAL_SIZE -- remembered size follows new layout
+        savedSize = NORMAL_SIZE
     end
 
     SearchBox.TextSize    = L.btnText
@@ -964,7 +1046,6 @@ local function doRelayout(vp)
     syncSortText()
     syncToolTexts()
 
-    -- rebuild entries with new metrics
     if not scanning and #allServers > 0 then
         renderList()
     end
@@ -982,7 +1063,7 @@ local function requestRelayout()
         local cam = workspace.CurrentCamera
         local vp = cam and cam.ViewportSize or Vector2.new(lastVpX, lastVpY)
         if math.abs(vp.X - lastVpX) < 80 and math.abs(vp.Y - lastVpY) < 80 then
-            return -- ignore tiny resizes (keyboard pop-up etc.)
+            return
         end
         lastVpX, lastVpY = vp.X, vp.Y
         doRelayout(vp)
@@ -1001,17 +1082,18 @@ track(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(bindCamera))
 --═══════════════ AUTO REFRESH LOOP ═══════════════
 task.spawn(function()
     while guiAlive and ScreenGui.Parent do
-        task.wait(AUTO_REFRESH_INTERVAL)
-        if guiAlive and autoOn and not scanning then
+        -- [V2] mobile scans take much longer → refresh less often
+        task.wait(L.mobile and AUTO_REFRESH_MOBILE or AUTO_REFRESH_INTERVAL)
+        if guiAlive and ScreenGui.Parent and autoOn and not scanning then
             refresh()
         end
     end
 end)
 
 --═══════════════ BOOT ═══════════════
-print(("🍈 DurianHub loaded! [%s | parent: %s | logo: %s]"):format(
+print(("🍈 DurianHub v2 loaded! [%s | parent: %s | logo: %s]"):format(
     IsMobile and "MOBILE" or "PC",
     ScreenGui.Parent and ScreenGui.Parent.Name or "?",
-    LOGO_ASSET and "repo ✓" or "none"
+    LOGO_ASSET and "repo ✓" or "🍈 fallback"
 ))
-refresh()
+refresh()}
