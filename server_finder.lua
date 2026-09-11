@@ -1,5 +1,7 @@
 --═════════════════════════════════════════════════════════
---  🍈 DurianHub — Community Server Finder (v2.1)
+--  🍈 DurianHub — Community Server Finder (v2.2)
+--  [v2.2] logo cache validation • —/× swapped • icon refresh
+--         • sort UI removed (always Low → High)
 --═════════════════════════════════════════════════════════
 
 print("[DurianHub] 1/3 script loaded — running")
@@ -13,14 +15,18 @@ local AUTO_REFRESH_INTERVAL = 30
 local AUTO_REFRESH_MOBILE   = 60
 local SCAN_TIMEOUT          = 15 + MAX_PAGES * 4
 local DRAW_THROTTLE         = 0.75
+
+-- [v2.2] LOGO — if the file download still fails on your executor, upload
+-- your durian logo to Roblox as a Decal, copy its asset ID, and put it here:
+local LOGO_IMAGE_ID = 0   -- e.g. 123456789  (0 = use the GitHub/file method)
+
 local LOGO_REPO = "https://raw.githubusercontent.com/iccyzsn/SAG---Server-Finder-DurianHub/main/img/"
 
--- Glyphs that render reliably on ALL platforms (old ones were tofu ▯ on Android)
+-- Glyphs that render reliably on ALL platforms
 local G = {
     close = "×",   -- U+00D7
     max   = "□",   -- U+25A1
     maxOn = "▣",   -- U+25A3
-    drop  = "▼",   -- U+25BC
 }
 
 --═══════════════ SERVICES ═══════════════
@@ -109,7 +115,7 @@ local function computeLayout(vp)
             width   = math.clamp(vp.X - 20, 300, wide and 560 or 400),
             height  = math.min(math.clamp(vp.Y - 30, 360, 540), vp.Y - 16),
             entryH  = 62, joinW = 84, joinH = 38,
-            btnText = 12, metaText = 11, titleText = 13, rowH = 34,
+            btnText = 12, metaText = 11, titleText = 13,
         }
     else
         return {
@@ -123,7 +129,7 @@ local function computeLayout(vp)
             width   = 560,
             height  = math.min(math.clamp(vp.Y - 60, 340, 520), vp.Y - 40),
             entryH  = 56, joinW = 92, joinH = 34,
-            btnText = 13, metaText = 12, titleText = 13, rowH = 30,
+            btnText = 13, metaText = 12, titleText = 13,
         }
     end
 end
@@ -154,12 +160,9 @@ local C = {
 
 --═══════════════ STATE ═══════════════
 local allServers = {}
-local currentSort = "Low → High"
 local autoOn     = true
 local scanning   = false
 local searchText = ""
-
-local sortOptions = { "Low → High", "All Servers", "High → Low", "Not Full Only" }
 
 --═══════════════ HELPERS ═══════════════
 local function new(class, props, parent)
@@ -194,23 +197,57 @@ local function httpGet(url)
     return nil
 end
 
---═══════════════ LOGO ═══════════════
+--═══════════════ LOGO [v2.2 — rewritten] ═══════════════
+-- Old bug: if the first download returned a 404/error page, it was saved to
+-- disk, and every future run saw "file exists" and never re-downloaded.
+-- Now: validate PNG/JPEG magic bytes, delete bad cache, warn to console.
 local LOGO_ASSET = nil
-if writefile and isfile and getcustomasset then
+
+local function looksLikeImage(body)
+    return type(body) == "string" and #body > 8
+        and (string.sub(body, 1, 4) == "\137PNG"
+            or (string.byte(body, 1) == 0xFF and string.byte(body, 2) == 0xD8))
+end
+
+if LOGO_IMAGE_ID ~= 0 then
+    LOGO_ASSET = "rbxassetid://" .. tostring(LOGO_IMAGE_ID)
+    print("[DurianHub] logo: using rbxassetid " .. LOGO_IMAGE_ID)
+elseif writefile and isfile and readfile and getcustomasset then
     for _, fileName in ipairs({ "DurianHub.png", "DurianHub.jpeg", "DurianHub.jpg" }) do
         local localName = "DurianHub_" .. fileName
-        if not isfile(localName) then
-            local body = httpGet(LOGO_REPO .. fileName)
-            if body then pcall(function() writefile(localName, body) end) end
-        end
+        local body = nil
+
         if isfile(localName) then
+            local ok, data = pcall(readfile, localName)
+            body = ok and data or nil
+            if not looksLikeImage(body) then
+                warn("[DurianHub] cached logo is invalid (404 page?) — deleting: " .. localName)
+                if type(delfile) == "function" then pcall(delfile, localName) end
+                body = nil
+            end
+        end
+
+        if not body then
+            body = httpGet(LOGO_REPO .. fileName)
+            if not looksLikeImage(body) then
+                warn("[DurianHub] download failed / not an image: " .. LOGO_REPO .. fileName)
+                body = nil
+            else
+                pcall(function() writefile(localName, body) end)
+            end
+        end
+
+        if body then
             local ok, asset = pcall(getcustomasset, localName)
             if ok and asset then
                 LOGO_ASSET = asset
                 break
             end
+            warn("[DurianHub] getcustomasset failed for " .. localName)
         end
     end
+else
+    warn("[DurianHub] executor missing writefile/isfile/readfile/getcustomasset — logo fallback")
 end
 
 local function addLogo(parent, inset, textSize, zIndex)
@@ -359,9 +396,10 @@ local function windowButton(text, xOffset, isClose)
     return btn
 end
 
-local MinBtn   = windowButton("—", 0, false)
+-- [v2.2] swapped: standard order — □ ×   (× is now rightmost)
+local CloseBtn = windowButton(G.close, 0, true)
 local MaxBtn   = windowButton(G.max, IsMobile and -42 or -38, false)
-local CloseBtn = windowButton(G.close, IsMobile and -84 or -76, true)
+local MinBtn   = windowButton("—", IsMobile and -84 or -76, false)
 
 local Divider = new("Frame", {
     Size             = UDim2.new(1, -2 * L.pad, 0, 1),
@@ -416,10 +454,22 @@ local function toolButton(text)
     return btn, st
 end
 
-local SortBtn    = toolButton(currentSort .. "  " .. G.drop)
-local RefreshBtn, RefreshStroke = toolButton("↻  Refresh")
-local AutoBtn, AutoStroke       = toolButton("⏱  Auto: ON")
+-- [v2.2] Refresh = standalone green circular ICON button
+local RefreshBtn = new("TextButton", {
+    Position         = UDim2.new(0, 0, 0, 0),
+    Size             = UDim2.new(0, 36, 0, 36),
+    BackgroundColor3 = C.Forest,
+    Text             = "↻",
+    TextColor3       = C.White,
+    TextSize         = 17,
+    Font             = Enum.Font.GothamBold,
+    AutoButtonColor  = false,
+}, MainFrame)
+corner(18, RefreshBtn)
+RefreshBtn.MouseEnter:Connect(function() RefreshBtn.BackgroundColor3 = C.Sage end)
+RefreshBtn.MouseLeave:Connect(function() RefreshBtn.BackgroundColor3 = C.Forest end)
 
+local AutoBtn, AutoStroke = toolButton("⏱  Auto: ON")
 AutoBtn.BackgroundColor3 = C.GoldBG
 AutoBtn.TextColor3       = C.GoldText
 AutoStroke.Color         = C.GoldBorder
@@ -457,18 +507,6 @@ local StatusLabel = new("TextLabel", {
     Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left,
 }, StatusBadge)
 
---═══════════════ SORT DROPDOWN SHELL ═══════════════
-local SortList = new("Frame", {
-    Size             = UDim2.new(0, 140, 0, #sortOptions * L.rowH + 8),
-    Position         = UDim2.new(0, L.pad, 0, L.statusY + L.statusH + 4),
-    BackgroundColor3 = C.White,
-    BorderSizePixel  = 0,
-    Visible          = false,
-    ZIndex           = 40,
-}, MainFrame)
-corner(10, SortList)
-stroke(C.Border, 1, SortList)
-
 --═══════════════ SERVER LIST ═══════════════
 local ListFrame = new("ScrollingFrame", {
     Position             = UDim2.new(0, L.pad, 0, L.listY),
@@ -502,37 +540,24 @@ end
 
 local function layoutToolbar()
     SearchBox.Position = UDim2.new(0, L.pad, 0, L.searchY)
-    SearchBox.Size = L.mobile
-        and UDim2.new(1, -2 * L.pad, 0, L.searchH)
-        or  UDim2.new(1, -(2 * L.pad) - 180, 0, L.searchH)
-
     if L.mobile then
-        local w3   = L.width - 2 * L.pad - 16
-        local sortW = math.floor(w3 * 0.40)
-        local btnW  = math.floor((w3 - sortW - 16) / 2)
-        SortBtn.Position = UDim2.new(0, L.pad, 0, L.toolY)
-        SortBtn.Size     = UDim2.new(0, sortW, 0, L.toolH)
-        RefreshBtn.Position = UDim2.new(0, L.pad + sortW + 8, 0, L.toolY)
-        RefreshBtn.Size     = UDim2.new(0, btnW, 0, L.toolH)
-        AutoBtn.Position    = UDim2.new(0, L.pad + sortW + btnW + 16, 0, L.toolY)
-        AutoBtn.Size        = UDim2.new(0, btnW, 0, L.toolH)
+        SearchBox.Size = UDim2.new(1, -2 * L.pad, 0, L.searchH)
+        RefreshBtn.Position = UDim2.new(0, L.pad, 0, L.toolY)
+        RefreshBtn.Size     = UDim2.new(0, L.toolH, 0, L.toolH)
+        AutoBtn.Position    = UDim2.new(0, L.pad + L.toolH + 8, 0, L.toolY)
+        AutoBtn.Size        = UDim2.new(0, L.width - 2 * L.pad - L.toolH - 8, 0, L.toolH)
         StatusBadge.AnchorPoint = Vector2.new(0, 0)
         StatusBadge.Position    = UDim2.new(0, L.pad, 0, L.statusY)
     else
-        RefreshBtn.Position = UDim2.new(1, -L.pad - 164, 0, L.toolY)
-        RefreshBtn.Size     = UDim2.new(0, 78, 0, L.toolH)
-        AutoBtn.Position    = UDim2.new(1, -L.pad - 82, 0, L.toolY)
-        AutoBtn.Size        = UDim2.new(0, 78, 0, L.toolH)
-        SortBtn.Position    = UDim2.new(0, L.pad, 0, L.statusY)
-        SortBtn.Size        = UDim2.new(0, 120, 0, L.statusH)
+        SearchBox.Size = UDim2.new(1, -(2 * L.pad) - 136, 0, L.searchH)
+        RefreshBtn.Position = UDim2.new(1, -L.pad - 36, 0, L.toolY)
+        RefreshBtn.Size     = UDim2.new(0, 36, 0, 36)
+        AutoBtn.Position    = UDim2.new(1, -L.pad - 36 - 8 - 84, 0, L.toolY)
+        AutoBtn.Size        = UDim2.new(0, 84, 0, L.toolH)
         StatusBadge.AnchorPoint = Vector2.new(1, 0)
         StatusBadge.Position    = UDim2.new(1, -L.pad, 0, L.statusY)
     end
     StatusBadge.Size = UDim2.new(0, 0, 0, L.statusH)
-
-    SortList.Size = UDim2.new(0, L.mobile and 160 or 140, 0, #sortOptions * L.rowH + 8)
-    SortList.Position = UDim2.new(0, L.pad, 0,
-        (L.mobile and L.toolY or L.statusY) + (L.mobile and L.toolH or L.statusH) + 4)
 
     ListFrame.Position = UDim2.new(0, L.pad, 0, L.listY)
     ListFrame.Size     = UDim2.new(1, -2 * L.pad, 1, -(L.listY + 12))
@@ -540,8 +565,7 @@ local function layoutToolbar()
 end
 
 local function syncToolTexts()
-    RefreshBtn.Text = scanning and "⏳"
-        or (L.mobile and "↻ Refresh" or "↻  Refresh")
+    RefreshBtn.Text = scanning and "⏳" or "↻"
     AutoBtn.Text = autoOn
         and (L.mobile and "⏱ Auto ON" or "⏱  Auto: ON")
         or  (L.mobile and "⏱ Auto OFF" or "⏱  Auto: OFF")
@@ -609,18 +633,8 @@ local function renderList()
         end
     end
 
-    if currentSort == "Low → High" or currentSort == "Not Full Only" then
-        if currentSort == "Not Full Only" then
-            local kept = {}
-            for _, s in ipairs(filtered) do
-                if s.playing < s.maxPlayers then table.insert(kept, s) end
-            end
-            filtered = kept
-        end
-        table.sort(filtered, function(a, b) return a.playing < b.playing end)
-    elseif currentSort == "High → Low" then
-        table.sort(filtered, function(a, b) return a.playing > b.playing end)
-    end
+    -- [v2.2] sort UI removed — ALWAYS lowest population first
+    table.sort(filtered, function(a, b) return a.playing < b.playing end)
 
     local cap = L.mobile and 150 or 400
     local total = #filtered
@@ -631,7 +645,7 @@ local function renderList()
     local titleOffset = -(L.joinW + 64)
 
     for i, server in ipairs(filtered) do
-        local isTop = (currentSort ~= "High → Low") and i <= 3
+        local isTop = i <= 3
         local entry = new("Frame", {
             Size             = UDim2.new(1, -8, 0, L.entryH),
             BackgroundColor3 = C.CardBG,
@@ -801,31 +815,6 @@ local function refresh()
     end)
 end
 
---═══════════════ SORT MENU ITEMS ═══════════════
-local function syncSortText()
-    SortBtn.Text = currentSort .. (L.mobile and " " or "  ") .. G.drop
-end
-
-for i, opt in ipairs(sortOptions) do
-    local ob = new("TextButton", {
-        Size = UDim2.new(1, -8, 0, L.rowH - 4),
-        Position = UDim2.new(0, 4, 0, (i - 1) * L.rowH + 4),
-        BackgroundColor3 = C.White,
-        Text = opt, TextColor3 = C.Text, TextSize = L.btnText,
-        Font = Enum.Font.GothamMedium, AutoButtonColor = false,
-        ZIndex = 41,
-    }, SortList)
-    corner(7, ob)
-    ob.MouseEnter:Connect(function() ob.BackgroundColor3 = C.GoldBG end)
-    ob.MouseLeave:Connect(function() ob.BackgroundColor3 = C.White end)
-    ob.MouseButton1Click:Connect(function()
-        currentSort = opt
-        syncSortText()
-        SortList.Visible = false
-        renderList()
-    end)
-end
-
 --═══════════════ WINDOW STATE + TWEENS ═══════════════
 local isMinimized, isMaximized = false, false
 local savedSize, savedPos = NORMAL_SIZE, CENTER
@@ -950,10 +939,6 @@ SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
     end)
 end)
 
-SortBtn.MouseButton1Click:Connect(function()
-    SortList.Visible = not SortList.Visible
-end)
-
 RefreshBtn.MouseButton1Click:Connect(refresh)
 
 AutoBtn.MouseButton1Click:Connect(function()
@@ -969,19 +954,6 @@ AutoBtn.MouseButton1Click:Connect(function()
     end
     syncToolTexts()
 end)
-
-track(UserInputService.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if (input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch)
-       and SortList.Visible then
-        local p = input.Position
-        local a, s = SortList.AbsolutePosition, SortList.AbsoluteSize
-        local inside = p.X >= a.X and p.X <= a.X + s.X
-            and p.Y >= a.Y and p.Y <= a.Y + s.Y
-        if not inside then SortList.Visible = false end
-    end
-end))
 
 --═══════════════ RESPONSIVE RELAYOUT ═══════════════
 local function doRelayout(vp)
@@ -1009,14 +981,11 @@ local function doRelayout(vp)
     end
 
     SearchBox.TextSize    = L.btnText
-    SortBtn.TextSize      = L.btnText
-    RefreshBtn.TextSize   = L.btnText
     AutoBtn.TextSize      = L.btnText
     StatusLabel.TextSize  = L.statusText
 
     layoutHeader()
     layoutToolbar()
-    syncSortText()
     syncToolTexts()
 
     if not scanning and #allServers > 0 then
@@ -1064,9 +1033,8 @@ end)
 
 --═══════════════ BOOT ═══════════════
 print("[DurianHub] 3/3 fully loaded — starting scan")
-print(("🍈 DurianHub v2.1 [%s | parent: %s | logo: %s]"):format(
+print(("🍈 DurianHub v2.2 [%s | logo: %s]"):format(
     IsMobile and "MOBILE" or "PC",
-    ScreenGui.Parent and ScreenGui.Parent.Name or "?",
-    LOGO_ASSET and "repo ✓" or "🍈 fallback"
+    LOGO_ASSET and "loaded ✓" or "🍈 fallback"
 ))
 refresh()
