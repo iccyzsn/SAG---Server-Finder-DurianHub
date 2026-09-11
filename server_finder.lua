@@ -1,7 +1,6 @@
 --═════════════════════════════════════════════════════════
---  🍈 DurianHub — Community Server Finder (v2.3 slim)
---  [v2.3] logo = rbxassetid • download pipeline removed
---         • debug prints removed • always Low → High
+--  🍈 DurianHub — Community Server Finder (v2.4)
+--  [v2.4] texture-ID logo • emoji refresh glyph • no rank marks
 --═════════════════════════════════════════════════════════
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -15,6 +14,11 @@ local SCAN_TIMEOUT          = 15 + MAX_PAGES * 4
 local DRAW_THROTTLE         = 0.75
 
 local LOGO_ASSET = "rbxassetid://76601069095550"
+
+-- The old arrow glyph is missing from Roblox fonts on Android (renders as
+-- a rectangle box). Real emoji always render, so we use those instead.
+local ICON_READY    = "🔄"
+local ICON_SCANNING = "⏳"
 
 local G = {
     close = "×",
@@ -364,14 +368,14 @@ SearchBox.FocusLost:Connect(function()
     SearchStroke.Color = C.Border
 end)
 
--- Refresh: green circle icon — ↻ when ready, ⏳ while scanning
+-- Refresh: green circle icon — ready emoji when idle, hourglass while scanning
 local RefreshBtn = new("TextButton", {
     Position         = UDim2.new(0, 0, 0, 0),
     Size             = UDim2.new(0, 36, 0, 36),
     BackgroundColor3 = C.Forest,
-    Text             = "↻",
+    Text             = ICON_READY,
     TextColor3       = C.White,
-    TextSize         = 17,
+    TextSize         = 16,
     Font             = Enum.Font.GothamBold,
     AutoButtonColor  = false,
 }, MainFrame)
@@ -491,7 +495,7 @@ local function layoutToolbar()
 end
 
 local function syncToolTexts()
-    RefreshBtn.Text = scanning and "⏳" or "↻"
+    RefreshBtn.Text = scanning and ICON_SCANNING or ICON_READY
     AutoBtn.Text = autoOn
         and (L.mobile and "⏱ Auto ON" or "⏱  Auto: ON")
         or  (L.mobile and "⏱ Auto OFF" or "⏱  Auto: OFF")
@@ -559,6 +563,7 @@ local function renderList()
         end
     end
 
+    -- always lowest population first
     table.sort(filtered, function(a, b) return a.playing < b.playing end)
 
     local cap = L.mobile and 150 or 400
@@ -601,7 +606,7 @@ local function renderList()
             Size = UDim2.new(1, titleOffset, 0, 18),
             Position = UDim2.new(0, 14, 0, nameY),
             BackgroundTransparency = 1,
-            Text = (isTop and ("#" .. i .. "  ") or "") .. GameName,
+            Text = GameName,
             TextColor3 = C.Text, TextSize = L.titleText,
             Font = Enum.Font.GothamBold,
             TextXAlignment = Enum.TextXAlignment.Left,
@@ -628,8 +633,8 @@ local function renderList()
         }, Tag)
 
         local metaText = L.mobile
-            and ("👥 %d/%d  ·  #%s"):format(server.playing, server.maxPlayers, string.sub(server.id, 1, 8))
-            or  ("👥  %d / %d      🆔  #%s"):format(server.playing, server.maxPlayers, string.sub(server.id, 1, 8))
+            and ("👥 %d/%d  ·  %s"):format(server.playing, server.maxPlayers, string.sub(server.id, 1, 8))
+            or  ("👥  %d / %d      🆔  %s"):format(server.playing, server.maxPlayers, string.sub(server.id, 1, 8))
 
         new("TextLabel", {
             Size = UDim2.new(1, titleOffset, 0, 14),
@@ -957,5 +962,5 @@ task.spawn(function()
 end)
 
 --═══════════════ BOOT ═══════════════
-print(("🍈 DurianHub v2.3 loaded [%s]"):format(IsMobile and "MOBILE" or "PC"))
+print(("🍈 DurianHub v2.4 loaded [%s]"):format(IsMobile and "MOBILE" or "PC"))
 refresh()
