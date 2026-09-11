@@ -206,8 +206,8 @@ ScreenGui.Destroying:Connect(cleanup)
 if type(protectgui) == "function" then pcall(protectgui, ScreenGui) end
 
 --═══════════════ FLOATING LOGO (minimized state) ═══════════════
-local LOGO_FLOAT_SIZE = 44   -- was 56 — smaller floating button
-local LOGO_ZOOM       = 1.3  -- >1 crops the asset's baked-in whitespace (tune 1.1–1.5)
+local LOGO_FLOAT_SIZE = 30  -- was 56 — smaller floating button
+local LOGO_ZOOM       = 1  -- >1 crops the asset's baked-in whitespace (tune 1.1–1.5)
 
 local LogoFloat = new("TextButton", {
     AnchorPoint      = Vector2.new(0.5, 0.5),
